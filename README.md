@@ -8,37 +8,36 @@
 
 FitGyldrah is a multi-role fitness management platform where:
 
-- **Gym owners** can register and manage gyms.
-- **Trainers** can apply to gyms and manage members.
-- **Members** can join gyms and track their fitness journey.
-- **Trainers** can generate AI-assisted diet plans based on user data.
+- Gym owners can register and manage gyms.
+- Trainers can apply to gyms and manage members.
+- Members can join gyms and track their fitness journey.
+- Trainers can generate AI-assisted diet plans based on user data.
 
 ---
 
 ## Current Status
 
-This project is in early development.
-
 ### Implemented
-- Django project setup
-- Basic configuration using `.env`
-- Core project structure
+- Django backend and Next.js frontend setup
+- PostgreSQL database integration
+- Full containerization using Docker and Docker Compose
+- Root environment variable configuration
 
 ### In Progress / Planned
 - User authentication (JWT)
 - Role system (Owner / Trainer / Member)
 - Gym management system
 - Trainer-member workflow
-- AI diet generation
+- AI diet generation (Local LLM)
 
 ---
 
-## Tech Stack (Current)
+## Tech Stack
 
-- **Backend:** Django
-- **Environment Management:** python-dotenv
-- **Database (current):** SQLite
-- **Future Plans:** PostgreSQL, AI integration
+- **Frontend:** Next.js (React), Tailwind CSS
+- **Backend:** Django, Django REST Framework
+- **Database:** PostgreSQL
+- **Infrastructure:** Docker, Docker Compose
 
 ---
 
@@ -51,113 +50,122 @@ git clone <YOUR_REPO_URL>
 cd fitgyldrah
 ```
 
-### 2. Create Virtual Environment
+---
 
-```bash
-python -m venv venv
+### 2. Setup Environment Variables
 
-# Linux / Mac
-source venv/bin/activate
+Create a `.env` file in the root directory of the project:
 
-# Windows
-venv\Scripts\activate
-```
-
-### 3. Install Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Setup Environment Variables
-
-Create a `.env` file in the backend root directory:
-
-```ini
-SECRET_KEY=your-secret-key
+```env
+# Django Settings
+SECRET_KEY=your-secure-secret-key-without-dollar-signs
 DEBUG=True
-ALLOWED_HOSTS=localhost,127.0.0.1
+ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0
+
+# PostgreSQL Database Settings
+POSTGRES_DB=FitGyldrah
+POSTGRES_USER=GyldrahUser
+POSTGRES_PASSWORD=your_secure_password
+DB_HOST=db
+DB_PORT=5432
 ```
 
- **Do NOT commit `.env` to GitHub.**
+⚠️ Do NOT commit `.env` to GitHub.
 
-### 5. Run Migrations
+---
+
+### 3. Build and Run with Docker
+
+Make sure Docker Desktop is running on your machine.
 
 ```bash
-python manage.py migrate
+docker-compose up --build
 ```
 
-### 6. Run Development Server
+After initial build:
 
 ```bash
-python manage.py runserver
+docker-compose up
 ```
 
-The server will start at: `http://127.0.0.1:8000/`
+---
+
+### 4. Access the Application
+
+- Frontend (Next.js): http://localhost:3000  
+- Backend API (Django): http://localhost:8000  
+- Django Admin: http://localhost:8000/admin  
+
+To stop the servers:
+
+```bash
+docker-compose down
+```
 
 ---
 
 ## Git Workflow
 
 ### Rules
-- **Do NOT** push directly to `main`
+
+- Do NOT push directly to `main`
 - Always create a new branch
 
+---
+
 ### Create a Branch
+
 ```bash
 git checkout -b feature/<feature-name>
 ```
 
+---
+
 ### Commit Changes
+
 ```bash
 git add .
-git commit -m "your message"
+git commit -m "your clear, descriptive message"
 ```
 
+---
+
 ### Push Branch
+
 ```bash
 git push -u origin feature/<feature-name>
 ```
 
+---
+
 ### Open Pull Request
-1. Go to GitHub
-2. Create a PR
-3. Get it reviewed before merging
+
+- Go to GitHub
+- Create a PR
+- Get it reviewed before merging
 
 ---
 
-## 📁 Project Structure (Basic)
+## Project Structure
 
-```text
-fitgyldrah/
+```
+FitGyldrah/
 │
 ├── backend/
+│   ├── backend/          # Django core settings
 │   ├── manage.py
-│   ├── backend/
-│   │   ├── settings.py
-│   │   ├── urls.py
-│   │   └── ...
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   └── .dockerignore
 │
-├── .env
-├── requirements.txt
+├── frontend/
+│   ├── src/              # Next.js source code
+│   ├── package.json
+│   ├── Dockerfile
+│   └── .dockerignore
+│
+├── .env                  # Root environment variables (Ignored by Git)
+├── .gitignore
+├── docker-compose.yml
 └── README.md
 ```
-
----
-
-## ⚠️ Important Notes
-
-- The `.env` file **must** remain private.
-- Currently using SQLite (no PostgreSQL yet).
-- Docker is **NOT** used at this stage.
-- Keep commits clean and meaningful.
-
----
-
-## 📌 Future Scope
-
-- PostgreSQL integration
-- JWT authentication
-- Role-based access control
-- AI-powered recommendations
-- Full frontend (Next.js)
