@@ -76,6 +76,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "authentication",
     "gyms",
+    "trainers",
 ]
 
 MIDDLEWARE = [
