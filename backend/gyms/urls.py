@@ -11,6 +11,7 @@ from trainers.views import (
     GymApplicationsListView,
     ApplicationReviewView,
 )
+from members.views import GymMembersListView, AssignTrainerView
 
 urlpatterns = [
     # ── Gym endpoints ──────────────────────────────────
@@ -36,5 +37,13 @@ urlpatterns = [
         "<uuid:gym_id>/applications/<uuid:application_id>/review/",
         ApplicationReviewView.as_view(),
         name="gym-application-review",
+    ),
+    path(
+        "<uuid:gym_id>/members/", GymMembersListView.as_view(), name="gym-members-list"
+    ),
+    path(
+        "<uuid:gym_id>/members/<uuid:enrollment_id>/assign-trainer/",
+        AssignTrainerView.as_view(),
+        name="gym-assign-trainer",
     ),
 ]
