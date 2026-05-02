@@ -77,6 +77,7 @@ INSTALLED_APPS = [
     "authentication",
     "gyms",
     "trainers",
+    "members",
 ]
 
 MIDDLEWARE = [
