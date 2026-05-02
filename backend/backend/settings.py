@@ -78,6 +78,7 @@ INSTALLED_APPS = [
     "gyms",
     "trainers",
     "members",
+    "schedules",
 ]
 
 MIDDLEWARE = [
