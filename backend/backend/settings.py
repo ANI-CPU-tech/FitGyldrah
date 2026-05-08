@@ -80,6 +80,7 @@ INSTALLED_APPS = [
     "members",
     "schedules",
     "plans",
+    "biometrics",
 ]
 
 MIDDLEWARE = [
