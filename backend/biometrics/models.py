@@ -6,101 +6,77 @@ from django.utils import timezone
 
 class Biometric(models.Model):
     """
-    One row = one measurement snapshot for a member.
+    A single biometric reading logged by a member.
+    This table is converted to a TimescaleDB hypertable after the initial
+    Django migration — see migrations/0002_create_hypertable.py.
 
-    This table is converted into a TimescaleDB hypertable in migration 0001.
-    TimescaleDB partitions rows by `recorded_at` into weekly chunks,
-    making time-range queries (trends, history) fast at any scale.
+    TimescaleDB automatically partitions this table by `recorded_at`
+    for ultra-fast time-range queries (weekly trends, monthly averages).
 
-    Query rules:
-      - ALWAYS filter by member + recorded_at range first
-      - ALWAYS order by recorded_at — never by id
-      - Use the TimescaleDB helper views in views.py for aggregation
+    Cardinality: One User → Many Biometric readings (time-series).
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    member = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="biometrics",
-        limit_choices_to={"role": "MEMBER"},
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="biometrics"
     )
 
-    # ── Core body composition ─────────────────────────────────────────
-    weight_kg = models.FloatField(null=True, blank=True, help_text="Body weight in kg")
+    # Core measurements — all nullable so partial entries are allowed
+    weight = models.FloatField(null=True, blank=True, help_text="kg")
+    height = models.FloatField(
+        null=True, blank=True, help_text="cm — rarely changes but tracked"
+    )
     body_fat_pct = models.FloatField(
-        null=True, blank=True, help_text="Body fat percentage (1–60)"
+        null=True, blank=True, help_text="Body fat percentage"
     )
-    muscle_mass_kg = models.FloatField(
-        null=True, blank=True, help_text="Lean muscle mass in kg"
-    )
+    muscle_mass = models.FloatField(null=True, blank=True, help_text="kg")
     bmi = models.FloatField(
-        null=True,
-        blank=True,
-        help_text="Auto-computed from weight + member height if blank",
+        null=True, blank=True, help_text="Auto-calculated if not provided"
     )
 
-    # ── Optional vitals ───────────────────────────────────────────────
-    resting_hr_bpm = models.PositiveIntegerField(
+    # Additional optional metrics
+    waist_cm = models.FloatField(
+        null=True, blank=True, help_text="Waist circumference in cm"
+    )
+    chest_cm = models.FloatField(
+        null=True, blank=True, help_text="Chest circumference in cm"
+    )
+    hip_cm = models.FloatField(
+        null=True, blank=True, help_text="Hip circumference in cm"
+    )
+    resting_hr = models.PositiveIntegerField(
         null=True, blank=True, help_text="Resting heart rate (bpm)"
-    )
-    systolic_bp = models.PositiveIntegerField(
-        null=True, blank=True, help_text="Systolic blood pressure (mmHg)"
-    )
-    diastolic_bp = models.PositiveIntegerField(
-        null=True, blank=True, help_text="Diastolic blood pressure (mmHg)"
     )
 
     notes = models.TextField(blank=True, default="")
 
-    # ── Hypertable dimension column ───────────────────────────────────
-    # TimescaleDB partitions on this column — must always be indexed.
+    # TIME DIMENSION — this is the hypertable partition key
+    # TimescaleDB chunks the table by this column automatically
     recorded_at = models.DateTimeField(
         default=timezone.now,
         db_index=True,
-        help_text="When the measurement was actually taken",
+        help_text="When the measurement was taken. Hypertable partition key.",
     )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "biometrics"
         ordering = ["-recorded_at"]
         indexes = [
-            # Covers the most common query: member X's data between date A and B
-            models.Index(fields=["member", "-recorded_at"], name="bio_member_time_idx"),
+            # Composite index for the most common query: one user's data over a time range
+            models.Index(
+                fields=["user", "recorded_at"], name="idx_biometrics_user_time"
+            ),
         ]
 
     def __str__(self):
-        parts = []
-        if self.weight_kg:
-            parts.append(f"{self.weight_kg}kg")
-        if self.body_fat_pct:
-            parts.append(f"{self.body_fat_pct}%bf")
-        if self.bmi:
-            parts.append(f"BMI {self.bmi}")
-        reading = ", ".join(parts) or "no measurements"
-        return f"{self.member.name} @ {self.recorded_at:%Y-%m-%d %H:%M} — {reading}"
+        return f"{self.user.name} @ {self.recorded_at:%Y-%m-%d %H:%M} | weight={self.weight}kg"
 
     def save(self, *args, **kwargs):
-        # Auto-compute BMI from weight + member's stored height if not supplied
-        if self.weight_kg and not self.bmi:
-            try:
-                h_cm = self.member.height
-                if h_cm:
-                    self.bmi = round(self.weight_kg / ((h_cm / 100) ** 2), 1)
-            except Exception:
-                pass
+        # Auto-calculate BMI if weight and height are both present and BMI not manually set
+        if self.weight and self.height and not self.bmi:
+            height_m = self.height / 100
+            self.bmi = round(self.weight / (height_m**2), 2)
         super().save(*args, **kwargs)
-
-    @staticmethod
-    def bmi_category(bmi: float | None) -> str | None:
-        if bmi is None:
-            return None
-        if bmi < 18.5:
-            return "Underweight"
-        if bmi < 25.0:
-            return "Normal"
-        if bmi < 30.0:
-            return "Overweight"
-        return "Obese"
