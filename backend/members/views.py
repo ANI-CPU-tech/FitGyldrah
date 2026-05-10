@@ -184,7 +184,7 @@ class RenewEnrollmentView(APIView):
             )
 
         start_date = timezone.now().date()
-        end_date = MemberEnrollment.compute_end_date(start_date, old.tier.duration_type)
+        end_date = start_date
 
         new_enrollment = MemberEnrollment.objects.create(
             member=request.user,
@@ -193,7 +193,7 @@ class RenewEnrollmentView(APIView):
             start_date=start_date,
             end_date=end_date,
             price_paid=old.tier.price,
-            status=MemberEnrollment.Status.ACTIVE,
+            status=MemberEnrollment.Status.PENDING_PAYMENT,  # <--- Changed to PENDING_PAYMENT
             trainer=old.trainer,  # Keep same trainer on renewal
         )
         return Response(
