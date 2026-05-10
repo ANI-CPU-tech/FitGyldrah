@@ -13,6 +13,7 @@ class MemberEnrollment(models.Model):
     """
 
     class Status(models.TextChoices):
+        PENDING_PAYMENT = "PENDING_PAYMENT", "Pending Payment"
         ACTIVE = "ACTIVE", "Active"
         EXPIRED = "EXPIRED", "Expired"
         CANCELLED = "CANCELLED", "Cancelled"
@@ -39,7 +40,7 @@ class MemberEnrollment(models.Model):
     start_date = models.DateField()
     end_date = models.DateField()
     status = models.CharField(
-        max_length=10,
+        max_length=20,
         choices=Status.choices,
         default=Status.ACTIVE,
         db_index=True,

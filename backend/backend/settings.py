@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     "plans",
     "biometrics",
     "ai_engine",
+    "payments",
 ]
 
 MIDDLEWARE = [
@@ -146,7 +147,8 @@ CELERY_TASK_TRACK_STARTED = True  # allows polling view to return "STARTED"
 CELERY_TASK_TIME_LIMIT = 120  # hard kill after 2 minutes
 CELERY_TASK_SOFT_TIME_LIMIT = 90
 
-
+RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "")
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 

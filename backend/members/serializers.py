@@ -140,17 +140,15 @@ class EnrollmentCreateSerializer(serializers.Serializer):
         request = self.context["request"]
         gym = self.validated_data["gym"]
         tier = self.validated_data["tier"]
-        start_date = timezone.now().date()
-        end_date = MemberEnrollment.compute_end_date(start_date, tier.duration_type)
-
+        placeholder_date = timezone.now().date()
         return MemberEnrollment.objects.create(
             member=request.user,
             gym=gym,
             tier=tier,
-            start_date=start_date,
-            end_date=end_date,
+            start_date=placeholder_date,
+            end_date=placeholder_date,
             price_paid=tier.price,  # snapshot price at time of joining
-            status=MemberEnrollment.Status.ACTIVE,
+            status=MemberEnrollment.Status.PENDING_PAYMENT,  # ← Changed from ACTIVE
         )
 
 
