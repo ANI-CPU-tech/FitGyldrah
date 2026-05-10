@@ -81,6 +81,7 @@ INSTALLED_APPS = [
     "schedules",
     "plans",
     "biometrics",
+    "ai_engine",
 ]
 
 MIDDLEWARE = [
