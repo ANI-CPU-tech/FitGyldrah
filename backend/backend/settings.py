@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     "plans",
     "biometrics",
     "ai_engine",
+    "payments",
 ]
 
 MIDDLEWARE = [
