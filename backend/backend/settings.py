@@ -81,6 +81,7 @@ INSTALLED_APPS = [
     "schedules",
     "plans",
     "biometrics",
+    "ai_engine",
 ]
 
 MIDDLEWARE = [
@@ -126,6 +127,24 @@ DATABASES = {
         "PORT": os.environ.get("DB_PORT", "5432"),
     }
 }
+
+
+# ── Groq ──────────────────────────────────────────────────────────────────────
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")  # get from console.groq.com
+GROQ_MODEL = "llama-3.3-70b-versatile"  # alternatives: mixtral-8x7b-32768, gemma2-9b-it
+GROQ_TEMPERATURE = 0.4
+GROQ_MAX_TOKENS = 4096
+
+# ── Celery + Redis ────────────────────────────────────────────────────────────
+CELERY_BROKER_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = "UTC"
+CELERY_TASK_TRACK_STARTED = True  # allows polling view to return "STARTED"
+CELERY_TASK_TIME_LIMIT = 120  # hard kill after 2 minutes
+CELERY_TASK_SOFT_TIME_LIMIT = 90
 
 
 # Password validation
