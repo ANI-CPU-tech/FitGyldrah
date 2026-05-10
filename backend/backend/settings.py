@@ -131,7 +131,7 @@ DATABASES = {
 
 # ── Groq ──────────────────────────────────────────────────────────────────────
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")  # get from console.groq.com
-GROQ_MODEL = "llama3-70b-8192"  # alternatives: mixtral-8x7b-32768, gemma2-9b-it
+GROQ_MODEL = "llama-3.3-70b-versatile"  # alternatives: mixtral-8x7b-32768, gemma2-9b-it
 GROQ_TEMPERATURE = 0.4
 GROQ_MAX_TOKENS = 4096
 
