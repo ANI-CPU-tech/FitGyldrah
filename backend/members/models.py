@@ -40,7 +40,7 @@ class MemberEnrollment(models.Model):
     start_date = models.DateField()
     end_date = models.DateField()
     status = models.CharField(
-        max_length=20,
+        max_length=30,
         choices=Status.choices,
         default=Status.ACTIVE,
         db_index=True,
