@@ -13,16 +13,26 @@ class Gym(models.Model):
     )
     name = models.CharField(max_length=100)
     location = models.TextField()
-    facilities = models.TextField(
-        blank=True,
-        default="",
-        help_text="Comma-separated list e.g. 'Pool, Sauna, Free Weights'",
-    )
-    operating_hours = models.JSONField(
-        default=dict, help_text='e.g. {"mon-fri": "6am-10pm", "sat-sun": "8am-8pm"}'
-    )
+    facilities = models.TextField(blank=True, default="")
+    operating_hours = models.JSONField(default=dict)
     logo_url = models.URLField(blank=True, default="")
     is_active = models.BooleanField(default=True)
+
+    # ── Razorpay Marketplace ───────────────────────────────────────────
+    # Set when the gym owner completes bank onboarding via ConnectBankView.
+    # Format: "acc_XXXXXXXXXXXXXXXXXX" (provided by Razorpay Route API).
+    # Until this is set, the gym cannot accept member payments.
+    razorpay_linked_account_id = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        default=None,
+        help_text=(
+            "Razorpay Route linked account ID (acc_xxx). "
+            "Set automatically when owner connects their bank."
+        ),
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -31,7 +41,15 @@ class Gym(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"{self.name} (owned by {self.owner.name})"
+        linked = (
+            "✓ Bank linked" if self.razorpay_linked_account_id else "✗ Bank not linked"
+        )
+        return f"{self.name} ({linked})"
+
+    @property
+    def is_payment_ready(self) -> bool:
+        """True only when the gym owner has completed bank onboarding."""
+        return bool(self.razorpay_linked_account_id)
 
 
 class SubscriptionTier(models.Model):
@@ -40,12 +58,8 @@ class SubscriptionTier(models.Model):
         YEARLY = "YEARLY", "Yearly"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    gym = models.ForeignKey(
-        Gym,
-        on_delete=models.CASCADE,
-        related_name="tiers",
-    )
-    name = models.CharField(max_length=100, help_text="e.g. 'Knight Tier', 'Lord Tier'")
+    gym = models.ForeignKey(Gym, on_delete=models.CASCADE, related_name="tiers")
+    name = models.CharField(max_length=100)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     duration_type = models.CharField(max_length=10, choices=DurationType.choices)
     description = models.TextField(blank=True, default="")
