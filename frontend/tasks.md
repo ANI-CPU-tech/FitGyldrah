@@ -1,76 +1,114 @@
-# Authentication Module — Implementation Tasks
+# FitGyldrah Frontend — Implementation Tasks
 
-## Backend Analysis Findings
+## Backend API Contract (verified from source)
 
-| Item | Value |
-|---|---|
-| Register endpoint | `POST /api/auth/register/` |
-| Login endpoint | `POST /api/auth/login/` |
-| Claim-role endpoint | `POST /api/auth/claim-role/` |
-| Token refresh endpoint | `POST /api/auth/token/refresh/` |
-| Register request fields | `email`, `name`, `password`, `password2`, `height?`, `weight?`, `body_fat_pct?`, `goals?` |
-| Login request fields | `email`, `password` |
-| Claim-role request fields | `{ "role": "MEMBER" \| "TRAINER" \| "OWNER" }` + `Authorization: Bearer <token>` |
-| Login response shape | `{ access, refresh, user: { id, email, name, role, … } }` |
-| Claim-role response shape | `{ detail: "Role successfully set to …", user: { … } }` |
-| Register response shape | User profile object (no tokens — user must log in separately) |
-| Error format | DRF validation dict: `{ field: ["msg"], detail: "msg" }` |
-| Default role on registration | `"MEMBER"` |
-| Role re-claim restriction | `RoleClaimSerializer` blocks changes if `user.role !== "MEMBER"` |
+### Auth
+| Endpoint | Method | Auth | Payload | Response |
+|---|---|---|---|---|
+| `/api/auth/register/` | POST | None | `email, name, password, password2, height?, weight?, body_fat_pct?, goals?` | UserProfile |
+| `/api/auth/login/` | POST | None | `email, password` | `{ access, refresh, user }` |
+| `/api/auth/claim-role/` | POST | Bearer | `{ role: "MEMBER"\|"TRAINER"\|"OWNER" }` | `{ detail, user }` |
+
+### Gyms
+| Endpoint | Method | Auth | Payload | Response |
+|---|---|---|---|---|
+| `/api/gyms/` | POST | Bearer (OWNER) | `name, location, facilities, operating_hours (JSON), logo_url?` | GymReadSerializer |
+| `/api/gyms/mine/` | GET | Bearer (OWNER) | — | `Gym[]` |
+| `/api/gyms/<id>/tiers/` | POST | Bearer (OWNER) | `name, price, duration_type ("MONTHLY"\|"YEARLY"), description?` | SubscriptionTier |
+| `/api/gyms/<id>/applications/?status=PENDING` | GET | Bearer (OWNER) | — | `GymApplication[]` |
+| `/api/gyms/<id>/applications/<app_id>/review/` | PUT | Bearer (OWNER) | `{ action: "approve"\|"reject", owner_note? }` | `{ detail, application }` |
+| `/api/gyms/<id>/members/?status=ACTIVE` | GET | Bearer (OWNER) | — | `MemberEnrollment[]` |
+| `/api/gyms/<id>/members/<enrollment_id>/assign-trainer/` | PUT | Bearer (OWNER) | `{ trainer_id: uuid }` | `{ detail, enrollment }` |
+| `/api/gyms/<id>/trainers/` | GET | Public | — | `TrainerProfile[]` (approved only) |
+
+### Payments
+| Endpoint | Method | Auth | Payload | Response |
+|---|---|---|---|---|
+| `/api/payments/connect-bank/` | POST | Bearer (OWNER) | `{ gym_id, account_number, ifsc_code }` | `{ detail, gym_id, linked_account_hint, is_payment_ready }` |
 
 ---
 
 ## Tasks
 
 - [x] **Task 1 — API utility** (`src/utils/api.ts`)
-  - Generic `apiRequest<T>` wrapper around native `fetch`
-  - Returns `{ data, error, status }` — never throws
-  - Typed convenience helpers: `authApi.register()`, `authApi.login()`, `authApi.claimRole()`
-  - Shared TypeScript interfaces: `RegisterPayload`, `LoginPayload`, `UserProfile`, `LoginResponse`, `ClaimRolePayload`, `ClaimRoleResponse`, `RoleValue`
-  - Base URL driven by `NEXT_PUBLIC_API_URL` env var, falls back to `http://localhost:8000`
+  - `apiRequest<T>` core wrapper
+  - `authApi`: register, login, claimRole
+  - `gymApi`: mine, create, createTier, applications, reviewApplication, members, assignTrainer, trainers
+  - `paymentApi`: connectBank
+  - All TypeScript interfaces: UserProfile, Gym, SubscriptionTier, GymApplication, MemberEnrollment, TrainerProfile, ConnectBankPayload/Response, etc.
 
-- [x] **Task 2 — Register page** (`src/app/register/page.tsx`)
-  - `"use client"` component
-  - Controlled inputs via `useState` for all fields discovered in `RegisterSerializer`
-  - Client-side password match validation before network call
-  - Calls `authApi.register()` on submit
-  - On success → `router.push("/login")`
-  - On failure → flattens DRF error dict and renders in `<p role="alert">`
-  - Zero CSS / zero UI library components
+- [x] **Task 2 — Register page** (`src/app/register/page.tsx`) — unchanged
 
 - [x] **Task 3 — Login page** (`src/app/login/page.tsx`)
-  - `"use client"` component
-  - Controlled inputs for `email` and `password`
-  - Calls `authApi.login()` on submit
-  - On success → saves `access_token`, `refresh_token`, `user` to `localStorage`
-  - **Smart redirect**: if `user.role !== "MEMBER"` (role already claimed) → `/dashboard`; otherwise → `/claim-role`
-  - On failure → flattens DRF error dict and renders in `<p role="alert">`
-  - Zero CSS / zero UI library components
+  - Smart role-based routing after login:
+    - No role / MEMBER → `/claim-role`
+    - OWNER → `/dashboard/owner`
+    - TRAINER → `/dashboard/trainer`
+    - MEMBER (confirmed) → `/dashboard/member`
 
 - [x] **Task 4 — Claim-role page** (`src/app/claim-role/page.tsx`)
-  - `"use client"` component
-  - On mount: reads `access_token` from `localStorage`; if missing → `router.replace("/login")`
-  - Three raw `<div>` cards, one per role (`MEMBER`, `OWNER`, `TRAINER`), each with `<h2>`, `<p>`, `<button>`
-  - `handleRoleSelection(role)` sends `POST /api/auth/claim-role/` with `Authorization` header
-  - Disables all buttons while a request is in-flight; shows "Setting role…" on the active button
-  - On success → updates cached `user` in `localStorage` → `router.push("/dashboard")`
-  - On failure → flattens DRF error dict and renders in `<p role="alert">`
-  - Zero CSS / zero UI library components
+  - Updated to use `dashboardForRole()` for post-claim redirect
+
+- [x] **Task 5 — RoleGuard** (`src/components/RoleGuard.tsx`)
+  - Reads token + user from localStorage on mount
+  - No token → `/login`
+  - Wrong role → user's own dashboard
+  - Correct role → renders children
+
+- [x] **Task 6 — Owner layout** (`src/app/dashboard/owner/layout.tsx`)
+  - Wraps all owner pages in `<RoleGuard allowed={["OWNER"]}>`
+  - Sidebar `<nav>` with `<Link>` to Overview, Facilities, Trainers, Members, Financials
+
+- [x] **Task 7 — Owner overview** (`src/app/dashboard/owner/page.tsx`)
+  - Fetches `GET /api/gyms/mine/`
+  - Lists gyms with payment-ready status and quick-links
+
+- [x] **Task 8 — Financials** (`src/app/dashboard/owner/financials/page.tsx`)
+  - Gym selector dropdown (pre-selectable via `?gym=<id>`)
+  - `POST /api/payments/connect-bank/` with `gym_id`, `account_number`, `ifsc_code`
+  - Hides form and shows `linked_account_hint` on success
+  - Shows "already linked" message if `gym.is_payment_ready`
+
+- [x] **Task 9 — Facilities** (`src/app/dashboard/owner/facilities/page.tsx`)
+  - Lists existing gyms with their tiers in a `<table>`
+  - `POST /api/gyms/` form: name, location, facilities, operating_hours (JSON), logo_url
+  - Per-gym `POST /api/gyms/<id>/tiers/` form: name, price, duration_type, description
+  - Optimistic tier append on success
+
+- [x] **Task 10 — Trainer Roster** (`src/app/dashboard/owner/trainers/page.tsx`)
+  - Gym selector
+  - Fetches `GET /api/gyms/<id>/applications/?status=PENDING`
+  - Table: trainer name, email, specialty, experience, cover letter, CV link, applied date
+  - Approve / Reject buttons → `PUT /api/gyms/<id>/applications/<app_id>/review/`
+  - Removes reviewed row from list on success
+
+- [x] **Task 11 — Member Directory** (`src/app/dashboard/owner/members/page.tsx`)
+  - Gym selector
+  - Fetches `GET /api/gyms/<id>/members/?status=ACTIVE` + `GET /api/gyms/<id>/trainers/` in parallel
+  - Table: member name, email, tier, price, trainer, dates, days remaining
+  - Per-row trainer `<select>` + Assign button → `PUT /api/gyms/<id>/members/<enrollment_id>/assign-trainer/`
+  - Updates trainer_name in local state on success
 
 ---
 
-## Files Created / Modified
+## File Tree
 
 ```
-frontend/
-└── src/
-    ├── utils/
-    │   └── api.ts              ← added claimRole helper + ClaimRolePayload/Response/RoleValue types
-    └── app/
-        ├── login/
-        │   └── page.tsx        ← updated redirect: /claim-role (or /dashboard if role already set)
-        ├── register/
-        │   └── page.tsx        ← unchanged
-        └── claim-role/
-            └── page.tsx        ← new role selection page
+frontend/src/
+├── components/
+│   └── RoleGuard.tsx
+├── utils/
+│   └── api.ts
+└── app/
+    ├── login/page.tsx
+    ├── register/page.tsx
+    ├── claim-role/page.tsx
+    └── dashboard/
+        └── owner/
+            ├── layout.tsx
+            ├── page.tsx
+            ├── facilities/page.tsx
+            ├── trainers/page.tsx
+            ├── members/page.tsx
+            └── financials/page.tsx
 ```

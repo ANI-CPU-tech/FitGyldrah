@@ -2,10 +2,23 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { apiRequest, UserProfile } from "@/utils/api";
+import { apiRequest, UserProfile, RoleValue } from "@/utils/api";
+
+function dashboardForRole(role: RoleValue): string {
+  switch (role) {
+    case "OWNER":
+      return "/dashboard/owner";
+    case "TRAINER":
+      return "/dashboard/trainer";
+    case "MEMBER":
+      return "/dashboard/member";
+    default:
+      return "/dashboard";
+  }
+}
 
 // Exact string values from backend authentication/models.py Role.TextChoices
-type Role = "MEMBER" | "TRAINER" | "OWNER";
+type Role = RoleValue;
 
 interface ClaimRoleResponse {
   detail: string;
@@ -90,7 +103,7 @@ export default function ClaimRolePage() {
       localStorage.setItem("user", JSON.stringify(data.user));
     }
 
-    router.push("/dashboard");
+    router.push(dashboardForRole((data?.user?.role as RoleValue) ?? "MEMBER"));
   }
 
   // Don't render the page until we've confirmed a token exists
