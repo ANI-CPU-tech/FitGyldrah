@@ -47,12 +47,17 @@ export default function LoginPage() {
       // Persist tokens in localStorage
       localStorage.setItem("access_token", data.access);
       localStorage.setItem("refresh_token", data.refresh);
-      // Optionally cache the user profile so other pages can read it without
-      // an extra /me request
+      // Cache the user profile so other pages can read it without an extra /me request
       localStorage.setItem("user", JSON.stringify(data.user));
     }
 
-    router.push("/dashboard");
+    // The backend defaults every new user to "MEMBER".
+    // RoleClaimSerializer only allows a change when role === "MEMBER", so
+    // if the user already has TRAINER or OWNER set we skip the claim step.
+    const roleAlreadyClaimed =
+      data?.user?.role && data.user.role !== "MEMBER";
+
+    router.push(roleAlreadyClaimed ? "/dashboard" : "/claim-role");
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────

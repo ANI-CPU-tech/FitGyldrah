@@ -81,6 +81,13 @@ export const authApi = {
       method: "POST",
       body: payload,
     }),
+
+  claimRole: (payload: ClaimRolePayload, token: string) =>
+    apiRequest<ClaimRoleResponse>("/api/auth/claim-role/", {
+      method: "POST",
+      body: payload,
+      token,
+    }),
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -118,5 +125,16 @@ export interface UserProfile {
 export interface LoginResponse {
   access: string;
   refresh: string;
+  user: UserProfile;
+}
+
+export type RoleValue = "MEMBER" | "TRAINER" | "OWNER";
+
+export interface ClaimRolePayload {
+  role: RoleValue;
+}
+
+export interface ClaimRoleResponse {
+  detail: string;
   user: UserProfile;
 }
