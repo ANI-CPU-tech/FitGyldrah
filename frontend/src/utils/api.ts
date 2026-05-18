@@ -15,8 +15,7 @@ export interface ApiResponse<T = unknown> {
 }
 
 /**
- * Core fetch wrapper. Returns { data, error, status } so callers never
- * have to deal with raw Response objects or thrown exceptions.
+ * Core JSON fetch wrapper. Returns { data, error, status } — never throws.
  */
 export async function apiRequest<T = unknown>(
   path: string,
@@ -27,10 +26,7 @@ export async function apiRequest<T = unknown>(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
+  if (token) headers["Authorization"] = `Bearer ${token}`;
 
   try {
     const response = await fetch(`${BASE_URL}${path}`, {
@@ -43,12 +39,10 @@ export async function apiRequest<T = unknown>(
     try {
       json = await response.json();
     } catch {
-      // Non-JSON response (e.g. 204 No Content)
+      /* 204 No Content */
     }
 
-    if (response.ok) {
-      return { data: json as T, error: null, status: response.status };
-    }
+    if (response.ok) return { data: json as T, error: null, status: response.status };
 
     const errorPayload =
       json && typeof json === "object"
@@ -65,20 +59,55 @@ export async function apiRequest<T = unknown>(
   }
 }
 
-// ── Convenience helpers ──────────────────────────────────────────────────────
+/**
+ * Multipart fetch wrapper — does NOT set Content-Type so the browser
+ * adds the correct boundary for FormData.
+ */
+export async function multipartRequest<T = unknown>(
+  path: string,
+  method: "POST" | "PATCH",
+  formData: FormData,
+  token: string
+): Promise<ApiResponse<T>> {
+  try {
+    const response = await fetch(`${BASE_URL}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+
+    let json: unknown = null;
+    try {
+      json = await response.json();
+    } catch {
+      /* empty */
+    }
+
+    if (response.ok) return { data: json as T, error: null, status: response.status };
+
+    const errorPayload =
+      json && typeof json === "object"
+        ? (json as Record<string, string | string[]>)
+        : { detail: "An unexpected error occurred." };
+
+    return { data: null, error: errorPayload, status: response.status };
+  } catch {
+    return {
+      data: null,
+      error: { detail: "Network error. Is the backend running?" },
+      status: 0,
+    };
+  }
+}
+
+// ── Auth API ─────────────────────────────────────────────────────────────────
 
 export const authApi = {
   register: (payload: RegisterPayload) =>
-    apiRequest<UserProfile>("/api/auth/register/", {
-      method: "POST",
-      body: payload,
-    }),
+    apiRequest<UserProfile>("/api/auth/register/", { method: "POST", body: payload }),
 
   login: (payload: LoginPayload) =>
-    apiRequest<LoginResponse>("/api/auth/login/", {
-      method: "POST",
-      body: payload,
-    }),
+    apiRequest<LoginResponse>("/api/auth/login/", { method: "POST", body: payload }),
 
   claimRole: (payload: ClaimRolePayload, token: string) =>
     apiRequest<ClaimRoleResponse>("/api/auth/claim-role/", {
@@ -88,16 +117,14 @@ export const authApi = {
     }),
 };
 
-export const gymApi = {
-  /** GET /api/gyms/mine/ — owner's own gyms */
-  mine: (token: string) =>
-    apiRequest<Gym[]>("/api/gyms/mine/", { token }),
+// ── Gym API ──────────────────────────────────────────────────────────────────
 
-  /** POST /api/gyms/ — create a new gym */
+export const gymApi = {
+  mine: (token: string) => apiRequest<Gym[]>("/api/gyms/mine/", { token }),
+
   create: (payload: GymWritePayload, token: string) =>
     apiRequest<Gym>("/api/gyms/", { method: "POST", body: payload, token }),
 
-  /** POST /api/gyms/<id>/tiers/ — add a subscription tier */
   createTier: (gymId: string, payload: TierWritePayload, token: string) =>
     apiRequest<SubscriptionTier>(`/api/gyms/${gymId}/tiers/`, {
       method: "POST",
@@ -105,14 +132,12 @@ export const gymApi = {
       token,
     }),
 
-  /** GET /api/gyms/<id>/applications/?status=PENDING */
   applications: (gymId: string, status: string, token: string) =>
     apiRequest<GymApplication[]>(
       `/api/gyms/${gymId}/applications/?status=${status}`,
       { token }
     ),
 
-  /** PUT /api/gyms/<id>/applications/<app_id>/review/ */
   reviewApplication: (
     gymId: string,
     appId: string,
@@ -124,14 +149,12 @@ export const gymApi = {
       { method: "PUT", body: payload, token }
     ),
 
-  /** GET /api/gyms/<id>/members/?status=ACTIVE */
   members: (gymId: string, status: string, token: string) =>
     apiRequest<MemberEnrollment[]>(
       `/api/gyms/${gymId}/members/?status=${status}`,
       { token }
     ),
 
-  /** PUT /api/gyms/<id>/members/<enrollment_id>/assign-trainer/ */
   assignTrainer: (
     gymId: string,
     enrollmentId: string,
@@ -143,13 +166,13 @@ export const gymApi = {
       { method: "PUT", body: { trainer_id: trainerId }, token }
     ),
 
-  /** GET /api/gyms/<id>/trainers/ — approved trainers at a gym */
   trainers: (gymId: string, token: string) =>
     apiRequest<TrainerProfile[]>(`/api/gyms/${gymId}/trainers/`, { token }),
 };
 
+// ── Payment API ───────────────────────────────────────────────────────────────
+
 export const paymentApi = {
-  /** POST /api/payments/connect-bank/ */
   connectBank: (payload: ConnectBankPayload, token: string) =>
     apiRequest<ConnectBankResponse>("/api/payments/connect-bank/", {
       method: "POST",
@@ -158,7 +181,132 @@ export const paymentApi = {
     }),
 };
 
-// ── Auth types ───────────────────────────────────────────────────────────────
+// ── Trainer API ───────────────────────────────────────────────────────────────
+
+export const trainerApi = {
+  /** GET /api/trainers/profile/ */
+  getProfile: (token: string) =>
+    apiRequest<TrainerProfile>("/api/trainers/profile/", { token }),
+
+  /** POST /api/trainers/profile/setup/ — multipart */
+  setupProfile: (formData: FormData, token: string) =>
+    multipartRequest<TrainerProfile>(
+      "/api/trainers/profile/setup/",
+      "POST",
+      formData,
+      token
+    ),
+
+  /** PATCH /api/trainers/profile/ — multipart */
+  updateProfile: (formData: FormData, token: string) =>
+    multipartRequest<TrainerProfile>(
+      "/api/trainers/profile/",
+      "PATCH",
+      formData,
+      token
+    ),
+
+  /** POST /api/trainers/apply/ */
+  apply: (payload: TrainerApplyPayload, token: string) =>
+    apiRequest<GymApplication>("/api/trainers/apply/", {
+      method: "POST",
+      body: payload,
+      token,
+    }),
+
+  /** GET /api/trainers/applications/mine/ */
+  myApplications: (token: string) =>
+    apiRequest<GymApplication[]>("/api/trainers/applications/mine/", { token }),
+};
+
+// ── Biometrics API ────────────────────────────────────────────────────────────
+
+export const biometricsApi = {
+  /** GET /api/biometrics/member/<member_id>/ — trainer reads assigned member */
+  memberHistory: (memberId: string, token: string) =>
+    apiRequest<BiometricEntry[]>(`/api/biometrics/member/${memberId}/`, { token }),
+
+  /** GET /api/biometrics/trends/?granularity=weekly */
+  trends: (params: string, token: string) =>
+    apiRequest<BiometricTrendsResponse>(`/api/biometrics/trends/?${params}`, {
+      token,
+    }),
+};
+
+// ── Schedule API ──────────────────────────────────────────────────────────────
+
+export const scheduleApi = {
+  /** GET /api/schedules/trainer/?upcoming=true */
+  list: (query: string, token: string) =>
+    apiRequest<Schedule[]>(`/api/schedules/trainer/?${query}`, { token }),
+
+  /** POST /api/schedules/trainer/ */
+  create: (payload: ScheduleCreatePayload, token: string) =>
+    apiRequest<Schedule>("/api/schedules/trainer/", {
+      method: "POST",
+      body: payload,
+      token,
+    }),
+
+  /** PUT /api/schedules/trainer/<id>/complete/ */
+  markComplete: (scheduleId: string, token: string) =>
+    apiRequest<{ detail: string; schedule: Schedule }>(
+      `/api/schedules/trainer/${scheduleId}/complete/`,
+      { method: "PUT", token }
+    ),
+};
+
+// ── Plans API ─────────────────────────────────────────────────────────────────
+
+export const planApi = {
+  /** GET /api/plans/trainer/?member_id=<id> */
+  list: (query: string, token: string) =>
+    apiRequest<FitnessPlan[]>(`/api/plans/trainer/?${query}`, { token }),
+
+  /** POST /api/plans/trainer/generate/ */
+  generate: (payload: AIGeneratePayload, token: string) =>
+    apiRequest<AIGenerateResponse>("/api/plans/trainer/generate/", {
+      method: "POST",
+      body: payload,
+      token,
+    }),
+
+  /** GET /api/plans/trainer/generate/<task_id>/status/ */
+  pollStatus: (taskId: string, token: string) =>
+    apiRequest<AIStatusResponse>(
+      `/api/plans/trainer/generate/${taskId}/status/`,
+      { token }
+    ),
+
+  /** PATCH /api/plans/trainer/<id>/ — edit content_json */
+  update: (planId: string, payload: Partial<FitnessPlan>, token: string) =>
+    apiRequest<FitnessPlan>(`/api/plans/trainer/${planId}/`, {
+      method: "PATCH",
+      body: payload,
+      token,
+    }),
+
+  /** PUT /api/plans/trainer/<id>/approve/ */
+  approve: (planId: string, token: string) =>
+    apiRequest<{ detail: string; plan: FitnessPlan }>(
+      `/api/plans/trainer/${planId}/approve/`,
+      { method: "PUT", token }
+    ),
+};
+
+// ── AI Logs API ───────────────────────────────────────────────────────────────
+
+export const aiApi = {
+  /** GET /api/ai/logs/ */
+  logs: (query: string, token: string) =>
+    apiRequest<AIPromptLog[]>(`/api/ai/logs/?${query}`, { token }),
+
+  /** GET /api/ai/logs/<id>/ */
+  logDetail: (logId: string, token: string) =>
+    apiRequest<AIPromptLogDetail>(`/api/ai/logs/${logId}/`, { token }),
+};
+
+// ── Auth types ────────────────────────────────────────────────────────────────
 
 export interface RegisterPayload {
   email: string;
@@ -207,7 +355,7 @@ export interface ClaimRoleResponse {
   user: UserProfile;
 }
 
-// ── Gym types ────────────────────────────────────────────────────────────────
+// ── Gym types ─────────────────────────────────────────────────────────────────
 
 export interface SubscriptionTier {
   id: string;
@@ -252,7 +400,7 @@ export interface TierWritePayload {
   description?: string;
 }
 
-// ── Trainer / Application types ──────────────────────────────────────────────
+// ── Trainer types ─────────────────────────────────────────────────────────────
 
 export interface TrainerProfile {
   id: string;
@@ -267,6 +415,11 @@ export interface TrainerProfile {
   is_available: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface TrainerApplyPayload {
+  gym: string; // gym UUID
+  cover_letter?: string;
 }
 
 export interface GymApplication {
@@ -294,7 +447,7 @@ export interface ReviewResponse {
   application: GymApplication;
 }
 
-// ── Member / Enrollment types ────────────────────────────────────────────────
+// ── Member / Enrollment types ─────────────────────────────────────────────────
 
 export interface MemberEnrollment {
   id: string;
@@ -314,7 +467,160 @@ export interface AssignTrainerResponse {
   enrollment: MemberEnrollment;
 }
 
-// ── Payment types ────────────────────────────────────────────────────────────
+// ── Biometrics types ──────────────────────────────────────────────────────────
+
+export interface BiometricEntry {
+  id: string;
+  weight: number | null;
+  height: number | null;
+  body_fat_pct: number | null;
+  muscle_mass: number | null;
+  bmi: number | null;
+  bmi_category: string | null;
+  waist_cm: number | null;
+  chest_cm: number | null;
+  hip_cm: number | null;
+  resting_hr: number | null;
+  notes: string;
+  recorded_at: string;
+  created_at: string;
+}
+
+export interface BiometricTrendRow {
+  period: string;
+  avg_weight: number | null;
+  avg_body_fat: number | null;
+  avg_bmi: number | null;
+  avg_muscle_mass: number | null;
+  avg_resting_hr: number | null;
+  reading_count: number;
+}
+
+export interface BiometricTrendsResponse {
+  granularity: string;
+  from_date: string;
+  to_date: string;
+  results: BiometricTrendRow[];
+}
+
+// ── Schedule types ────────────────────────────────────────────────────────────
+
+export type SessionType = "WORKOUT" | "CONSULTATION" | "ASSESSMENT" | "DIET_REVIEW";
+export type ScheduleStatus =
+  | "PENDING"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "CANCELLED"
+  | "COMPLETED";
+
+export interface Schedule {
+  id: string;
+  trainer_name: string;
+  trainer_email: string;
+  member_name: string;
+  member_email: string;
+  gym_name: string;
+  session_type: SessionType;
+  session_type_label: string;
+  proposed_time: string;
+  duration_minutes: number;
+  end_time: string;
+  location: string;
+  notes: string;
+  status: ScheduleStatus;
+  status_label: string;
+  member_note: string;
+  is_upcoming: boolean;
+  responded_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  cancelled_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduleCreatePayload {
+  member: string; // UUID
+  gym: string; // UUID
+  session_type: SessionType;
+  proposed_time: string; // ISO datetime
+  duration_minutes: number;
+  location?: string;
+  notes?: string;
+}
+
+// ── Plan types ────────────────────────────────────────────────────────────────
+
+export type PlanType = "DIET" | "WORKOUT";
+export type PlanStatus = "DRAFT" | "APPROVED" | "ARCHIVED";
+
+export interface FitnessPlan {
+  id: string;
+  title: string;
+  plan_type: PlanType;
+  plan_type_label: string;
+  trainer_name: string;
+  trainer_email: string;
+  member_name: string;
+  content_json: Record<string, unknown>;
+  notes: string;
+  ai_generated: boolean;
+  ai_task_id: string;
+  status: PlanStatus;
+  status_label: string;
+  version: number;
+  approved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AIGeneratePayload {
+  member_id: string;
+  plan_type: PlanType;
+  extra_instructions?: string;
+}
+
+export interface AIGenerateResponse {
+  detail: string;
+  task_id: string;
+  member_id: string;
+  plan_type: PlanType;
+}
+
+export interface AIStatusResponse {
+  state: "PENDING" | "STARTED" | "SUCCESS" | "FAILURE";
+  detail: string;
+  plan?: FitnessPlan;
+}
+
+// ── AI Log types ──────────────────────────────────────────────────────────────
+
+export interface AIPromptLog {
+  id: string;
+  plan_type: string;
+  member_name: string;
+  plan_id: string | null;
+  model_used: string;
+  total_tokens: number;
+  gen_status: "PENDING" | "SUCCESS" | "FAILED";
+  status_label: string;
+  extra_instructions: string;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface AIPromptLogDetail extends AIPromptLog {
+  trainer_name: string;
+  celery_task_id: string;
+  system_prompt: string;
+  user_prompt: string;
+  raw_response: string;
+  error_message: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
+// ── Payment types ─────────────────────────────────────────────────────────────
 
 export interface ConnectBankPayload {
   gym_id: string;
