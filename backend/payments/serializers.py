@@ -4,7 +4,40 @@ from .models import Transaction
 
 
 # ─────────────────────────────────────────────
-# Order Creation — member initiates payment
+# Bank Connect — owner onboarding
+# ─────────────────────────────────────────────
+class ConnectBankSerializer(serializers.Serializer):
+    """
+    Accepts bank details from the gym owner to create a
+    Razorpay Route linked account.
+    """
+
+    account_number = serializers.CharField(max_length=30)
+    ifsc_code = serializers.CharField(max_length=11)
+
+    def validate_ifsc_code(self, value):
+        value = value.strip().upper()
+        if len(value) != 11:
+            raise serializers.ValidationError(
+                "IFSC code must be exactly 11 characters."
+            )
+        return value
+
+    def validate_account_number(self, value):
+        value = value.strip()
+        if not value.isdigit():
+            raise serializers.ValidationError(
+                "Account number must contain digits only."
+            )
+        if not (9 <= len(value) <= 18):
+            raise serializers.ValidationError(
+                "Account number must be between 9 and 18 digits."
+            )
+        return value
+
+
+# ─────────────────────────────────────────────
+# Order Creation
 # ─────────────────────────────────────────────
 class OrderCreateSerializer(serializers.Serializer):
     enrollment_id = serializers.UUIDField()
@@ -12,7 +45,6 @@ class OrderCreateSerializer(serializers.Serializer):
     def validate_enrollment_id(self, value):
         request = self.context["request"]
 
-        # Enrollment must exist and belong to the requesting user
         try:
             enrollment = MemberEnrollment.objects.select_related("tier", "gym").get(
                 pk=value, member=request.user
@@ -22,13 +54,11 @@ class OrderCreateSerializer(serializers.Serializer):
                 "Enrollment not found or does not belong to you."
             )
 
-        # Block payment if enrollment is already active
         if enrollment.status == MemberEnrollment.Status.ACTIVE:
             raise serializers.ValidationError(
                 "This enrollment is already active. No payment needed."
             )
 
-        # Block if a successful transaction already exists for this enrollment
         if Transaction.objects.filter(
             enrollment=enrollment,
             status=Transaction.Status.SUCCESS,
@@ -46,8 +76,7 @@ class OrderCreateSerializer(serializers.Serializer):
 
 
 # ─────────────────────────────────────────────
-# Payment Verification — frontend posts back
-# after Razorpay checkout completes
+# Payment Verification
 # ─────────────────────────────────────────────
 class PaymentVerifySerializer(serializers.Serializer):
     razorpay_order_id = serializers.CharField()
@@ -56,8 +85,6 @@ class PaymentVerifySerializer(serializers.Serializer):
 
     def validate_razorpay_order_id(self, value):
         request = self.context["request"]
-
-        # Must match a PENDING transaction owned by this user
         try:
             txn = Transaction.objects.select_related(
                 "enrollment__tier", "enrollment__gym"
@@ -70,7 +97,6 @@ class PaymentVerifySerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 "No pending transaction found for this order ID."
             )
-
         self._transaction = txn
         return value
 
@@ -80,7 +106,7 @@ class PaymentVerifySerializer(serializers.Serializer):
 
 
 # ─────────────────────────────────────────────
-# Read — transaction history
+# Transaction read — payment history
 # ─────────────────────────────────────────────
 class TransactionReadSerializer(serializers.ModelSerializer):
     gym_name = serializers.CharField(source="enrollment.gym.name", read_only=True)
@@ -95,6 +121,9 @@ class TransactionReadSerializer(serializers.ModelSerializer):
             "tier_name",
             "amount",
             "currency",
+            "platform_fee_pct",
+            "platform_fee_amount",
+            "gym_transfer_amount",
             "razorpay_order_id",
             "razorpay_payment_id",
             "status",
@@ -103,5 +132,4 @@ class TransactionReadSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        # Never expose the raw signature to clients
         read_only_fields = fields

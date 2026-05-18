@@ -1,4 +1,6 @@
 import logging
+import math
+import uuid
 
 import razorpay
 from django.conf import settings
@@ -9,11 +11,14 @@ from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied
 
+from authentication.permissions import IsOwner
+from gyms.models import Gym
 from members.models import MemberEnrollment
 from .models import Transaction
 from .serializers import (
+    ConnectBankSerializer,
     OrderCreateSerializer,
     PaymentVerifySerializer,
     TransactionReadSerializer,
@@ -22,28 +27,112 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 
-# ── Razorpay client singleton ──────────────────────────────────────────────
+# ── Shared Razorpay client ──────────────────────────────────────────────────
 
 
 def _get_razorpay_client() -> razorpay.Client:
     """
-    Returns an authenticated Razorpay client using test keys from settings.
-    Raises ImproperlyConfigured if keys are missing.
+    Returns the FitGyldrah platform-level Razorpay client.
+    Uses the global keys from settings — not any gym-specific keys.
     """
-    key_id = getattr(settings, "RAZORPAY_KEY_ID", None)
-    key_secret = getattr(settings, "RAZORPAY_KEY_SECRET", None)
+    key_id = getattr(settings, "RAZORPAY_KEY_ID", "")
+    key_secret = getattr(settings, "RAZORPAY_KEY_SECRET", "")
 
     if not key_id or not key_secret:
-        raise ValidationError(
-            "Razorpay keys are not configured. "
-            "Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in settings."
+        raise RuntimeError(
+            "RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET must be set in settings."
         )
 
     return razorpay.Client(auth=(key_id, key_secret))
 
 
+def _compute_split(amount_paise: int, fee_pct: int) -> tuple[int, int]:
+    """
+    Returns (platform_fee_paise, gym_transfer_paise).
+    Uses math.ceil on the fee so we never transfer more than we collect.
+    """
+    platform_fee = math.ceil(amount_paise * fee_pct / 100)
+    gym_transfer = amount_paise - platform_fee
+    return platform_fee, gym_transfer
+
+
 # ══════════════════════════════════════════════
-#  STEP 1 — Create a Razorpay Order
+#  BANK ONBOARDING — Gym Owner connects bank (MOCKED FOR DEMO)
+# ══════════════════════════════════════════════
+
+
+class ConnectBankView(APIView):
+    """
+    POST /api/payments/connect-bank/
+
+    Gym owner submits their bank details to link their account to the
+    FitGyldrah Razorpay Route marketplace.
+
+    *NOTE: MOCKED FOR DBMS PROJECT DEMO TO BYPASS RAZORPAY KYC*
+    """
+
+    permission_classes = [IsAuthenticated, IsOwner]
+
+    def post(self, request):
+        # ── Validate gym ownership ─────────────────────────────────────
+        gym_id = request.data.get("gym_id")
+        if not gym_id:
+            return Response(
+                {"detail": "gym_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            gym = Gym.objects.select_related("owner").get(pk=gym_id)
+        except Gym.DoesNotExist:
+            raise NotFound("Gym not found.")
+
+        if gym.owner != request.user:
+            raise PermissionDenied("You are not the owner of this gym.")
+
+        # ── Block re-linking if already connected ──────────────────────
+        if gym.razorpay_linked_account_id:
+            return Response(
+                {
+                    "detail": "This gym already has a linked bank account.",
+                    "linked_account_hint": f"acc_••••••{gym.razorpay_linked_account_id[-6:]}",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ── Validate bank details (to ensure realistic flow) ───────────
+        serializer = ConnectBankSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # ── MOCK THE RAZORPAY API CALL ─────────────────────────────────
+        # Generate a realistic-looking fake Razorpay account ID
+        mock_account_id = f"acc_mock_{uuid.uuid4().hex[:10]}"
+
+        # Save it to our database
+        gym.razorpay_linked_account_id = mock_account_id
+        gym.save(update_fields=["razorpay_linked_account_id", "updated_at"])
+
+        logger.info(
+            f"[Payments] Bank linked (MOCKED): gym={gym.id} "
+            f"account={mock_account_id} owner={request.user.email}"
+        )
+
+        return Response(
+            {
+                "detail": (
+                    f"Bank account successfully linked to '{gym.name}'. "
+                    "The gym can now accept member payments."
+                ),
+                "gym_id": str(gym.id),
+                "linked_account_hint": f"acc_••••••{mock_account_id[-6:]}",
+                "is_payment_ready": True,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# ══════════════════════════════════════════════
+#  STEP 1 — Create Razorpay Order with Route
 # ══════════════════════════════════════════════
 
 
@@ -52,24 +141,6 @@ class CreateOrderView(APIView):
     POST /api/payments/create-order/
 
     Member initiates payment for a pending enrollment.
-    Returns the Razorpay order details needed by the frontend
-    to open the Razorpay checkout modal.
-
-    Request body:
-        { "enrollment_id": "<uuid>" }
-
-    Response:
-        {
-            "razorpay_order_id": "order_XXXXXXXXXX",
-            "amount":            <amount in paise>,
-            "currency":          "INR",
-            "razorpay_key_id":   "<test key — safe to expose to frontend>",
-            "transaction_id":    "<our internal UUID>",
-            "prefill": {
-                "name":  "<member name>",
-                "email": "<member email>"
-            }
-        }
     """
 
     permission_classes = [IsAuthenticated]
@@ -80,27 +151,52 @@ class CreateOrderView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         enrollment = serializer.enrollment
+        gym = enrollment.gym
+
+        # ── Guard: gym must have a linked bank account ─────────────────
+        if not gym.is_payment_ready:
+            return Response(
+                {
+                    "detail": (
+                        f"'{gym.name}' has not completed bank onboarding. "
+                        "Payments are not yet available for this gym. "
+                        "Please contact the gym owner."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         client = _get_razorpay_client()
-
-        # Amount must be in paise (INR smallest unit)
+        fee_pct = getattr(settings, "RAZORPAY_PLATFORM_FEE_PCT", 5)
         amount_paise = int(enrollment.price_paid * 100)
 
-        # Create order on Razorpay
+        # We still calculate the split for our database schema!
+        platform_fee_paise, gym_transfer_paise = _compute_split(amount_paise, fee_pct)
+
+        logger.info(
+            f"[Payments] Order split: total=₹{enrollment.price_paid} "
+            f"platform=₹{platform_fee_paise / 100:.2f} ({fee_pct}%) "
+            f"gym=₹{gym_transfer_paise / 100:.2f} ({100 - fee_pct}%) "
+            f"linked_account={gym.razorpay_linked_account_id}"
+        )
+
+        # ── Build normal order payload (Without Route Transfers) ───────
+        order_payload = {
+            "amount": amount_paise,
+            "currency": "INR",
+            "receipt": str(enrollment.id),
+            "payment_capture": 1,
+            # We removed the 'transfers' array to bypass Razorpay's KYC block
+            "notes": {
+                "gym_name": gym.name,
+                "tier_name": enrollment.tier.name,
+                "member_email": request.user.email,
+                "platform_fee": f"{fee_pct}%",
+            },
+        }
+
         try:
-            rz_order = client.order.create(
-                {
-                    "amount": amount_paise,
-                    "currency": "INR",
-                    "receipt": str(enrollment.id),  # our internal reference
-                    "payment_capture": 1,  # auto-capture on success
-                    "notes": {
-                        "gym_name": enrollment.gym.name,
-                        "tier_name": enrollment.tier.name,
-                        "member_email": request.user.email,
-                    },
-                }
-            )
+            rz_order = client.order.create(order_payload)
         except razorpay.errors.BadRequestError as exc:
             logger.error(f"[Payments] Razorpay order creation failed: {exc}")
             return Response(
@@ -108,13 +204,13 @@ class CreateOrderView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as exc:
-            logger.error(f"[Payments] Unexpected Razorpay error: {exc}")
+            logger.error(f"[Payments] Unexpected error during order creation: {exc}")
             return Response(
                 {"detail": "Payment gateway error. Please try again."},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        # Create a PENDING transaction in our DB
+        # ── Create PENDING transaction with split details ───────────────
         txn = Transaction.objects.create(
             user=request.user,
             enrollment=enrollment,
@@ -122,12 +218,14 @@ class CreateOrderView(APIView):
             currency="INR",
             razorpay_order_id=rz_order["id"],
             status=Transaction.Status.PENDING,
+            platform_fee_pct=fee_pct,
+            platform_fee_amount=round(platform_fee_paise / 100, 2),
+            gym_transfer_amount=round(gym_transfer_paise / 100, 2),
         )
 
         logger.info(
             f"[Payments] Order created: rz_order={rz_order['id']} "
-            f"txn={txn.id} user={request.user.email} "
-            f"amount=₹{enrollment.price_paid}"
+            f"txn={txn.id} user={request.user.email}"
         )
 
         return Response(
@@ -137,11 +235,16 @@ class CreateOrderView(APIView):
                 "currency": "INR",
                 "razorpay_key_id": settings.RAZORPAY_KEY_ID,
                 "transaction_id": str(txn.id),
+                "split": {
+                    "platform_fee_pct": fee_pct,
+                    "platform_fee_inr": str(txn.platform_fee_amount),
+                    "gym_transfer_inr": str(txn.gym_transfer_amount),
+                },
                 "prefill": {
                     "name": request.user.name,
                     "email": request.user.email,
                 },
-                "description": (f"{enrollment.tier.name} — {enrollment.gym.name}"),
+                "description": f"{enrollment.tier.name} — {gym.name}",
             },
             status=status.HTTP_201_CREATED,
         )
@@ -156,9 +259,9 @@ class VerifyPaymentView(APIView):
     """
     POST /api/payments/verify/
 
-    Called by the frontend AFTER the Razorpay checkout modal succeeds.
-    Razorpay sends back three values which we use to cryptographically
-    verify the payment is genuine (HMAC-SHA256 over order_id + payment_id).
+    Called by the frontend after Razorpay checkout modal succeeds.
+    Verifies the HMAC-SHA256 signature using global platform keys,
+    then atomically marks the Transaction SUCCESS and activates the enrollment.
 
     Request body:
         {
@@ -166,16 +269,6 @@ class VerifyPaymentView(APIView):
             "razorpay_payment_id": "pay_XXXXXXXXXX",
             "razorpay_signature":  "<hmac>"
         }
-
-    On success:
-        - Transaction marked SUCCESS
-        - MemberEnrollment status → ACTIVE
-        - Enrollment start_date + end_date computed from today + tier duration
-
-    On failure:
-        - Transaction marked FAILED
-        - Enrollment remains unchanged
-        - 400 returned to client
     """
 
     permission_classes = [IsAuthenticated]
@@ -186,10 +279,9 @@ class VerifyPaymentView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         txn = serializer.transaction
-
         client = _get_razorpay_client()
 
-        # ── Cryptographic signature verification ───────────────────────
+        # ── HMAC-SHA256 signature verification ────────────────────────
         params = {
             "razorpay_order_id": request.data["razorpay_order_id"],
             "razorpay_payment_id": request.data["razorpay_payment_id"],
@@ -199,9 +291,8 @@ class VerifyPaymentView(APIView):
         try:
             client.utility.verify_payment_signature(params)
         except razorpay.errors.SignatureVerificationError:
-            # Signature mismatch — could be a spoofed request
             logger.warning(
-                f"[Payments] Signature verification FAILED "
+                f"[Payments] Signature FAILED "
                 f"order={params['razorpay_order_id']} "
                 f"user={request.user.email}"
             )
@@ -217,7 +308,7 @@ class VerifyPaymentView(APIView):
         # ── Atomic: update Transaction + activate Enrollment ───────────
         try:
             with db_transaction.atomic():
-                # 1. Mark transaction as SUCCESS
+                # 1. Mark transaction SUCCESS
                 txn.razorpay_payment_id = params["razorpay_payment_id"]
                 txn.razorpay_signature = params["razorpay_signature"]
                 txn.status = Transaction.Status.SUCCESS
@@ -248,7 +339,11 @@ class VerifyPaymentView(APIView):
             logger.error(f"[Payments] DB update failed after verification: {exc}")
             return Response(
                 {
-                    "detail": "Payment verified but failed to activate enrollment. Contact support."
+                    "detail": (
+                        "Payment verified but failed to activate enrollment. "
+                        "Please contact support with your order ID: "
+                        f"{params['razorpay_order_id']}"
+                    )
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
@@ -259,7 +354,9 @@ class VerifyPaymentView(APIView):
             f"payment={txn.razorpay_payment_id} "
             f"user={request.user.email} "
             f"enrollment={enrollment.id} "
-            f"active until {end_date}"
+            f"active_until={end_date} "
+            f"platform_fee=₹{txn.platform_fee_amount} "
+            f"gym_transfer=₹{txn.gym_transfer_amount}"
         )
 
         return Response(
@@ -287,7 +384,7 @@ class VerifyPaymentView(APIView):
 class TransactionHistoryView(generics.ListAPIView):
     """
     GET /api/payments/history/
-    Member views their full payment history across all enrollments.
+    Member views their full payment history.
     ?status=PENDING|SUCCESS|FAILED
     """
 
@@ -296,8 +393,7 @@ class TransactionHistoryView(generics.ListAPIView):
 
     def get_queryset(self):
         qs = Transaction.objects.filter(user=self.request.user).select_related(
-            "enrollment__gym",
-            "enrollment__tier",
+            "enrollment__gym", "enrollment__tier"
         )
         status_f = self.request.query_params.get("status")
         if status_f:
@@ -308,7 +404,7 @@ class TransactionHistoryView(generics.ListAPIView):
 class TransactionDetailView(generics.RetrieveAPIView):
     """
     GET /api/payments/history/{id}/
-    Member views a specific transaction.
+    Member views a specific transaction in full.
     """
 
     serializer_class = TransactionReadSerializer

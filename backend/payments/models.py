@@ -7,13 +7,15 @@ class Transaction(models.Model):
     """
     Immutable audit trail for every Razorpay payment attempt.
 
-    Lifecycle:
-      PENDING  → order created on Razorpay, awaiting frontend checkout
-      SUCCESS  → signature verified, enrollment activated
-      FAILED   → verification failed or explicit failure from Razorpay webhook
+    In the Marketplace model:
+      - FitGyldrah collects the full amount via the master account.
+      - Razorpay Route auto-transfers 95% to the gym's linked account.
+      - We store the transfer split amounts for our own audit trail.
 
-    One enrollment can have multiple Transaction rows (user retried payment),
-    but only ONE can ever be SUCCESS. The UniqueConstraint enforces this.
+    Lifecycle:
+      PENDING → order created, member has not completed checkout yet
+      SUCCESS → signature verified, enrollment activated, transfer routed
+      FAILED  → verification failed or explicit failure
     """
 
     class Status(models.TextChoices):
@@ -33,30 +35,33 @@ class Transaction(models.Model):
         related_name="transactions",
     )
 
-    # Amount in paise (Razorpay uses smallest currency unit — ₹1 = 100 paise)
+    # Full amount paid by member (in INR, stored as rupees)
     amount = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        help_text="Amount in INR (stored as rupees, sent to Razorpay as paise)",
+        max_digits=10, decimal_places=2, help_text="Full amount in INR"
     )
     currency = models.CharField(max_length=3, default="INR")
 
+    # Split breakdown — stored for our own accounting records
+    platform_fee_pct = models.PositiveIntegerField(
+        default=5, help_text="Platform fee % kept by FitGyldrah"
+    )
+    platform_fee_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        help_text="Amount kept by FitGyldrah (INR)",
+    )
+    gym_transfer_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        help_text="Amount routed to the gym's linked account (INR)",
+    )
+
     # Razorpay identifiers
-    razorpay_order_id = models.CharField(
-        max_length=255, unique=True, help_text="order_XXXXXXXXXX from Razorpay"
-    )
-    razorpay_payment_id = models.CharField(
-        max_length=255,
-        blank=True,
-        default="",
-        help_text="pay_XXXXXXXXXX — set after frontend checkout",
-    )
-    razorpay_signature = models.CharField(
-        max_length=512,
-        blank=True,
-        default="",
-        help_text="HMAC signature from Razorpay — set after verification",
-    )
+    razorpay_order_id = models.CharField(max_length=255, unique=True)
+    razorpay_payment_id = models.CharField(max_length=255, blank=True, default="")
+    razorpay_signature = models.CharField(max_length=512, blank=True, default="")
 
     status = models.CharField(
         max_length=10,
@@ -64,9 +69,7 @@ class Transaction(models.Model):
         default=Status.PENDING,
         db_index=True,
     )
-    failure_reason = models.TextField(
-        blank=True, default="", help_text="Error detail if status=FAILED"
-    )
+    failure_reason = models.TextField(blank=True, default="")
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -75,7 +78,6 @@ class Transaction(models.Model):
         db_table = "transactions"
         ordering = ["-created_at"]
         constraints = [
-            # A given enrollment can only have ONE successful payment
             models.UniqueConstraint(
                 fields=["enrollment"],
                 condition=models.Q(status="SUCCESS"),
@@ -85,12 +87,11 @@ class Transaction(models.Model):
 
     def __str__(self):
         return (
-            f"[{self.status}] ₹{self.amount} | "
-            f"order={self.razorpay_order_id} | "
-            f"user={self.user.email}"
+            f"[{self.status}] ₹{self.amount} "
+            f"(platform=₹{self.platform_fee_amount} / gym=₹{self.gym_transfer_amount}) | "
+            f"order={self.razorpay_order_id}"
         )
 
     @property
     def amount_in_paise(self) -> int:
-        """Razorpay requires amounts in the smallest currency unit."""
         return int(self.amount * 100)
