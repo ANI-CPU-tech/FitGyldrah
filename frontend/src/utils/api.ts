@@ -634,3 +634,266 @@ export interface ConnectBankResponse {
   linked_account_hint: string;
   is_payment_ready: boolean;
 }
+
+// ── Member-facing API helpers ─────────────────────────────────────────────────
+
+export const memberApi = {
+  /** GET /api/members/gyms/?search= */
+  discoverGyms: (search: string, token: string) =>
+    apiRequest<GymDiscovery[]>(
+      `/api/members/gyms/${search ? `?search=${encodeURIComponent(search)}` : ""}`,
+      { token }
+    ),
+
+  /** POST /api/members/enroll/ */
+  enroll: (payload: EnrollPayload, token: string) =>
+    apiRequest<MyEnrollment>("/api/members/enroll/", {
+      method: "POST",
+      body: payload,
+      token,
+    }),
+
+  /** GET /api/members/enrollments/?status= */
+  enrollments: (status: string, token: string) =>
+    apiRequest<MyEnrollment[]>(
+      `/api/members/enrollments/${status ? `?status=${status}` : ""}`,
+      { token }
+    ),
+
+  /** PUT /api/members/enrollments/<id>/cancel/ */
+  cancelEnrollment: (id: string, token: string) =>
+    apiRequest<{ detail: string; enrollment: MyEnrollment }>(
+      `/api/members/enrollments/${id}/cancel/`,
+      { method: "PUT", token }
+    ),
+
+  /** POST /api/members/enrollments/<id>/renew/ */
+  renewEnrollment: (id: string, token: string) =>
+    apiRequest<MyEnrollment>(`/api/members/enrollments/${id}/renew/`, {
+      method: "POST",
+      token,
+    }),
+};
+
+export const memberPaymentApi = {
+  /** POST /api/payments/create-order/ */
+  createOrder: (enrollmentId: string, token: string) =>
+    apiRequest<OrderCreateResponse>("/api/payments/create-order/", {
+      method: "POST",
+      body: { enrollment_id: enrollmentId },
+      token,
+    }),
+
+  /** POST /api/payments/verify/ */
+  verify: (payload: PaymentVerifyPayload, token: string) =>
+    apiRequest<PaymentVerifyResponse>("/api/payments/verify/", {
+      method: "POST",
+      body: payload,
+      token,
+    }),
+
+  /** GET /api/payments/history/ */
+  history: (token: string) =>
+    apiRequest<Transaction[]>("/api/payments/history/", { token }),
+};
+
+export const memberBiometricsApi = {
+  /** POST /api/biometrics/ */
+  log: (payload: BiometricWritePayload, token: string) =>
+    apiRequest<BiometricEntry>("/api/biometrics/", {
+      method: "POST",
+      body: payload,
+      token,
+    }),
+
+  /** GET /api/biometrics/latest/ */
+  latest: (token: string) =>
+    apiRequest<BiometricLatest>("/api/biometrics/latest/", { token }),
+
+  /** GET /api/biometrics/history/ */
+  history: (token: string) =>
+    apiRequest<BiometricEntry[]>("/api/biometrics/history/", { token }),
+
+  /** GET /api/biometrics/trends/?granularity=weekly */
+  trends: (granularity: string, token: string) =>
+    apiRequest<BiometricTrendsResponse>(
+      `/api/biometrics/trends/?granularity=${granularity}`,
+      { token }
+    ),
+
+  /** DELETE /api/biometrics/<id>/delete/ */
+  delete: (id: string, token: string) =>
+    apiRequest<{ detail: string }>(`/api/biometrics/${id}/delete/`, {
+      method: "DELETE",
+      token,
+    }),
+};
+
+export const memberScheduleApi = {
+  /** GET /api/schedules/member/?status=PENDING */
+  list: (query: string, token: string) =>
+    apiRequest<Schedule[]>(`/api/schedules/member/?${query}`, { token }),
+
+  /** PUT /api/schedules/member/<id>/respond/ */
+  respond: (id: string, payload: ScheduleRespondPayload, token: string) =>
+    apiRequest<{ detail: string; schedule: Schedule }>(
+      `/api/schedules/member/${id}/respond/`,
+      { method: "PUT", body: payload, token }
+    ),
+
+  /** PUT /api/schedules/member/<id>/cancel/ */
+  cancel: (id: string, token: string) =>
+    apiRequest<{ detail: string; schedule: Schedule }>(
+      `/api/schedules/member/${id}/cancel/`,
+      { method: "PUT", token }
+    ),
+};
+
+export const memberPlanApi = {
+  /** GET /api/plans/member/active/ */
+  active: (token: string) =>
+    apiRequest<FitnessPlan[]>("/api/plans/member/active/", { token }),
+};
+
+export const memberProfileApi = {
+  /** GET /api/auth/me/ */
+  get: (token: string) => apiRequest<UserProfile>("/api/auth/me/", { token }),
+
+  /** PUT /api/auth/me/ */
+  update: (payload: ProfileUpdatePayload, token: string) =>
+    apiRequest<UserProfile>("/api/auth/me/", {
+      method: "PUT",
+      body: payload,
+      token,
+    }),
+};
+
+// ── Member-specific types ─────────────────────────────────────────────────────
+
+export interface GymDiscovery {
+  id: string;
+  name: string;
+  location: string;
+  facilities: string;
+  operating_hours: Record<string, string>;
+  logo_url: string;
+  owner_name: string;
+  trainer_count: number;
+  tiers: SubscriptionTier[];
+  is_enrolled: boolean;
+}
+
+export interface EnrollPayload {
+  gym_id: string;
+  tier_id: string;
+}
+
+export interface MyEnrollment {
+  id: string;
+  gym_name: string;
+  gym_location: string;
+  tier_name: string;
+  tier_duration: string;
+  price_paid: string;
+  trainer_name: string | null;
+  start_date: string;
+  end_date: string;
+  days_remaining: number;
+  is_expired: boolean;
+  status: "PENDING_PAYMENT" | "ACTIVE" | "EXPIRED" | "CANCELLED";
+  cancelled_at: string | null;
+  created_at: string;
+}
+
+export interface OrderCreateResponse {
+  razorpay_order_id: string;
+  amount: number;
+  currency: string;
+  razorpay_key_id: string;
+  transaction_id: string;
+  split: {
+    platform_fee_pct: number;
+    platform_fee_inr: string;
+    gym_transfer_inr: string;
+  };
+  prefill: { name: string; email: string };
+  description: string;
+}
+
+export interface PaymentVerifyPayload {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}
+
+export interface PaymentVerifyResponse {
+  detail: string;
+  transaction: Transaction;
+  enrollment: {
+    id: string;
+    status: string;
+    start_date: string;
+    end_date: string;
+    gym: string;
+    tier: string;
+  };
+}
+
+export interface Transaction {
+  id: string;
+  gym_name: string;
+  tier_name: string;
+  amount: string;
+  currency: string;
+  platform_fee_pct: number;
+  platform_fee_amount: string;
+  gym_transfer_amount: string;
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  status: "PENDING" | "SUCCESS" | "FAILED";
+  status_label: string;
+  failure_reason: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BiometricLatest {
+  latest_weight: number | null;
+  latest_height: number | null;
+  latest_body_fat: number | null;
+  latest_muscle_mass: number | null;
+  latest_bmi: number | null;
+  latest_bmi_category: string | null;
+  latest_waist: number | null;
+  latest_resting_hr: number | null;
+  last_recorded_at: string | null;
+  weight_delta: number | null;
+  body_fat_delta: number | null;
+}
+
+export interface BiometricWritePayload {
+  weight?: number | null;
+  height?: number | null;
+  body_fat_pct?: number | null;
+  muscle_mass?: number | null;
+  bmi?: number | null;
+  waist_cm?: number | null;
+  chest_cm?: number | null;
+  hip_cm?: number | null;
+  resting_hr?: number | null;
+  notes?: string;
+  recorded_at?: string;
+}
+
+export interface ScheduleRespondPayload {
+  action: "accept" | "reject";
+  member_note?: string;
+}
+
+export interface ProfileUpdatePayload {
+  name?: string;
+  height?: number | null;
+  weight?: number | null;
+  body_fat_pct?: number | null;
+  goals?: string;
+}
