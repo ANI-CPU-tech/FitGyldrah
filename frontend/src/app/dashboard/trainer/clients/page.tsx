@@ -3,25 +3,15 @@
 /**
  * Clients page — shows the trainer's assigned members.
  *
- * Strategy: The backend has no single "my clients" endpoint for trainers.
- * We derive clients by:
- *   1. Fetching the trainer's APPROVED gym applications → get gym IDs.
- *   2. For each gym, fetching /api/gyms/<id>/members/?status=ACTIVE.
- *   3. Filtering enrollments where trainer_name matches the logged-in trainer.
- *
- * When a member row is clicked, we fetch their biometric trends from
- * GET /api/biometrics/member/<member_id>/ (trainer-scoped endpoint).
+ * Fetches GET /api/members/clients/ which is scoped to the authenticated
+ * trainer via their bearer token. No gym UUID is needed in the URL.
+ * The response includes `member_id` (the member's user UUID) which is
+ * passed directly to GET /api/biometrics/member/<member_id>/.
  */
 
 import { useEffect, useState } from "react";
-import {
-  trainerApi,
-  gymApi,
-  biometricsApi,
-  GymApplication,
-  MemberEnrollment,
-  BiometricEntry,
-} from "@/utils/api";
+import { AlertCircle, Loader2, ChevronRight, User } from "lucide-react";
+import { trainerApi, biometricsApi, TrainerClient, BiometricEntry } from "@/utils/api";
 
 function flattenErrors(e: Record<string, string | string[]>): string {
   return Object.entries(e)
@@ -32,242 +22,178 @@ function flattenErrors(e: Record<string, string | string[]>): string {
     .join(" | ");
 }
 
-// The GymMemberListSerializer doesn't include member.id directly —
-// we need it to fetch biometrics. We'll store it alongside the enrollment.
-interface ClientRow extends MemberEnrollment {
-  gym_id: string;
-  gym_name_display: string;
-  // member_id is not in GymMemberListSerializer, so we derive it from
-  // the enrollment id — but actually we need to use the biometrics
-  // trainer endpoint which takes member_id. We'll store it separately.
-  member_id_hint: string; // populated from enrollment.id as fallback
-}
-
 export default function ClientsPage() {
-  const [clients, setClients] = useState<ClientRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [clients, setClients]     = useState<TrainerClient[]>([]);
+  const [loading, setLoading]     = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Selected member for biometrics drill-down
-  const [selectedClient, setSelectedClient] = useState<ClientRow | null>(null);
+  const [selectedClient, setSelectedClient] = useState<TrainerClient | null>(null);
   const [biometrics, setBiometrics] = useState<BiometricEntry[]>([]);
   const [bioLoading, setBioLoading] = useState(false);
-  const [bioError, setBioError] = useState<string | null>(null);
+  const [bioError, setBioError]     = useState<string | null>(null);
 
-  // ── Load clients ───────────────────────────────────────────────────────────
   useEffect(() => {
     const token = localStorage.getItem("access_token") ?? "";
-    const user = (() => {
-      try { return JSON.parse(localStorage.getItem("user") ?? "{}"); } catch { return {}; }
-    })();
-    const trainerName: string = user.name ?? "";
 
-    trainerApi.myApplications(token).then(async ({ data: apps, error }) => {
-      if (error) {
-        setLoadError(flattenErrors(error));
-        setLoading(false);
-        return;
-      }
-
-      const approvedApps: GymApplication[] = (apps ?? []).filter(
-        (a) => a.status === "APPROVED"
-      );
-
-      if (approvedApps.length === 0) {
-        setLoading(false);
-        return;
-      }
-
-      // Fetch members for each approved gym in parallel
-      const results = await Promise.all(
-        approvedApps.map((app) =>
-          gymApi.members(
-            // gym_name is in the application but not gym_id directly.
-            // GymApplicationReadSerializer only has gym_name, not gym id.
-            // We need to resolve gym id. The application serializer doesn't
-            // expose gym.id — only gym_name. We'll use the public gym list
-            // to resolve name → id.
-            "", // placeholder — handled below
-            "ACTIVE",
-            token
-          ).then((r) => ({ app, result: r }))
-        )
-      );
-
-      // Since GymApplicationReadSerializer doesn't expose gym.id, we need
-      // to fetch the public gym list and match by name.
-      const gymsRes = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/gyms/`
-      );
-      const allGyms = gymsRes.ok ? await gymsRes.json() : [];
-
-      // Build name → id map
-      const gymNameToId: Record<string, string> = {};
-      for (const g of allGyms) {
-        gymNameToId[g.name] = g.id;
-      }
-
-      // Now fetch members for each approved gym using resolved IDs
-      const clientRows: ClientRow[] = [];
-      await Promise.all(
-        approvedApps.map(async (app) => {
-          const gymId = gymNameToId[app.gym_name];
-          if (!gymId) return;
-
-          const { data: members } = await gymApi.members(gymId, "ACTIVE", token);
-          if (!members) return;
-
-          for (const m of members) {
-            // Only include members assigned to this trainer
-            if (m.trainer_name === trainerName) {
-              clientRows.push({
-                ...m,
-                gym_id: gymId,
-                gym_name_display: app.gym_name,
-                // We don't have member UUID from this serializer.
-                // The biometrics trainer endpoint needs member_id.
-                // We'll use enrollment.id as a key and note the limitation.
-                member_id_hint: m.id,
-              });
-            }
-          }
-        })
-      );
-
-      setClients(clientRows);
+    // Single authenticated call — backend filters by trainer profile from token
+    trainerApi.clients(token).then(({ data, error }) => {
       setLoading(false);
+      if (error) { setLoadError(flattenErrors(error)); return; }
+      setClients(data ?? []);
     });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ── Fetch biometrics for selected client ───────────────────────────────────
-  async function handleSelectClient(client: ClientRow) {
+  async function handleSelectClient(client: TrainerClient) {
     setSelectedClient(client);
     setBiometrics([]);
     setBioError(null);
     setBioLoading(true);
 
     const token = localStorage.getItem("access_token") ?? "";
-    // The biometrics trainer endpoint: GET /api/biometrics/member/<member_id>/
-    // We use the enrollment id as a proxy — in a real scenario the member UUID
-    // would come from a richer serializer. For now we pass it and let the
-    // backend return a 403/404 if it doesn't match.
-    const { data, error } = await biometricsApi.memberHistory(
-      client.member_id_hint,
-      token
-    );
-
+    // Use member_id (the member's user UUID) — not the enrollment UUID
+    const { data, error } = await biometricsApi.memberHistory(client.member_id, token);
     setBioLoading(false);
-
-    if (error) {
-      setBioError(flattenErrors(error));
-      return;
-    }
-
+    if (error) { setBioError(flattenErrors(error)); return; }
     setBiometrics(data ?? []);
   }
 
   return (
-    <div>
-      <h1>My Clients</h1>
-
-      {loading && <p>Loading clients…</p>}
-      {loadError && <p role="alert">{loadError}</p>}
-
-      {!loading && clients.length === 0 && (
-        <p>
-          No assigned clients found. You need to be approved at a gym and have
-          members assigned to you by the gym owner.
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-zinc-50">My Clients</h1>
+        <p className="text-sm text-zinc-400 mt-1">
+          Members actively assigned to you across your approved gyms.
         </p>
+      </div>
+
+      {loadError && (
+        <div className="flex items-start gap-2.5 bg-red-950/40 border border-red-900/50 rounded-xl px-4 py-3.5 text-sm text-red-400">
+          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>{loadError}</span>
+        </div>
       )}
 
-      {clients.length > 0 && (
-        <table border={1}>
-          <thead>
-            <tr>
-              <th>Member</th>
-              <th>Email</th>
-              <th>Gym</th>
-              <th>Tier</th>
-              <th>Start</th>
-              <th>End</th>
-              <th>Days Left</th>
-              <th>Biometrics</th>
-            </tr>
-          </thead>
-          <tbody>
-            {clients.map((c) => (
-              <tr key={c.id}>
-                <td>{c.member_name}</td>
-                <td>{c.member_email}</td>
-                <td>{c.gym_name_display}</td>
-                <td>{c.tier_name}</td>
-                <td>{c.start_date}</td>
-                <td>{c.end_date}</td>
-                <td>{c.days_remaining}</td>
-                <td>
-                  <button
-                    type="button"
-                    onClick={() => handleSelectClient(c)}
-                    aria-pressed={selectedClient?.id === c.id}
-                  >
-                    {selectedClient?.id === c.id ? "Viewing" : "View Trends"}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      {loading ? (
+        <div className="flex items-center gap-2 text-sm text-zinc-500 py-8">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading clients…
+        </div>
+      ) : clients.length === 0 ? (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl px-6 py-10 text-center">
+          <User className="w-8 h-8 text-zinc-700 mx-auto mb-3" strokeWidth={1.5} />
+          <p className="text-sm text-zinc-500">
+            No assigned clients found. You need to be approved at a gym and have members assigned by the owner.
+          </p>
+        </div>
+      ) : (
+        <div className="flex gap-6 items-start">
 
-      {/* ── Biometrics drill-down ── */}
-      {selectedClient && (
-        <section>
-          <h2>
-            Biometric History — {selectedClient.member_name}
-          </h2>
+          {/* Client list panel */}
+          <div className="w-72 shrink-0 bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-zinc-800">
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">
+                {clients.length} Client{clients.length !== 1 ? "s" : ""}
+              </p>
+            </div>
+            <ul className="divide-y divide-zinc-800/60">
+              {clients.map((c) => {
+                const isSelected = selectedClient?.id === c.id;
+                return (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectClient(c)}
+                      className={[
+                        "w-full flex items-center gap-3 px-5 py-4 text-left transition-colors border-l-2",
+                        isSelected
+                          ? "bg-red-700/10 border-red-600"
+                          : "hover:bg-zinc-800/50 border-transparent",
+                      ].join(" ")}
+                    >
+                      <div className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center shrink-0">
+                        <User className="w-4 h-4 text-zinc-500" strokeWidth={1.5} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-medium truncate ${isSelected ? "text-red-400" : "text-zinc-200"}`}>
+                          {c.member_name}
+                        </p>
+                        <p className="text-xs text-zinc-500 truncate">{c.gym_name}</p>
+                      </div>
+                      <ChevronRight className="w-3.5 h-3.5 text-zinc-600 shrink-0" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
 
-          {bioLoading && <p>Loading biometrics…</p>}
-          {bioError && <p role="alert">{bioError}</p>}
+          {/* Detail panel */}
+          <div className="flex-1 min-w-0">
+            {!selectedClient ? (
+              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl px-6 py-16 text-center">
+                <p className="text-sm text-zinc-500">Select a client to view their biometric history.</p>
+              </div>
+            ) : (
+              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
+                <div className="px-6 py-4 border-b border-zinc-800">
+                  <h2 className="text-sm font-semibold text-zinc-200">{selectedClient.member_name}</h2>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    {selectedClient.gym_name} · {selectedClient.tier_name} · {selectedClient.days_remaining} days remaining
+                  </p>
+                </div>
 
-          {!bioLoading && biometrics.length === 0 && !bioError && (
-            <p>No biometric readings found for this member.</p>
-          )}
-
-          {biometrics.length > 0 && (
-            <table border={1}>
-              <thead>
-                <tr>
-                  <th>Recorded At</th>
-                  <th>Weight (kg)</th>
-                  <th>Height (cm)</th>
-                  <th>Body Fat %</th>
-                  <th>Muscle Mass</th>
-                  <th>BMI</th>
-                  <th>BMI Category</th>
-                  <th>Waist (cm)</th>
-                  <th>Resting HR</th>
-                  <th>Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {biometrics.map((b) => (
-                  <tr key={b.id}>
-                    <td>{new Date(b.recorded_at).toLocaleString()}</td>
-                    <td>{b.weight ?? "—"}</td>
-                    <td>{b.height ?? "—"}</td>
-                    <td>{b.body_fat_pct ?? "—"}</td>
-                    <td>{b.muscle_mass ?? "—"}</td>
-                    <td>{b.bmi ?? "—"}</td>
-                    <td>{b.bmi_category ?? "—"}</td>
-                    <td>{b.waist_cm ?? "—"}</td>
-                    <td>{b.resting_hr ?? "—"}</td>
-                    <td>{b.notes || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
+                {bioLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-zinc-500 px-6 py-8">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Loading biometrics…
+                  </div>
+                ) : bioError ? (
+                  <div className="flex items-start gap-2.5 m-6 bg-red-950/40 border border-red-900/50 rounded-xl px-4 py-3.5 text-sm text-red-400">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /><span>{bioError}</span>
+                  </div>
+                ) : biometrics.length === 0 ? (
+                  <p className="px-6 py-8 text-sm text-zinc-500 text-center">No biometric readings found.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-zinc-800">
+                          {["Date", "Weight", "Height", "Body Fat %", "Muscle", "BMI", "Category", "Waist", "HR", "Notes"].map((h) => (
+                            <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {biometrics.map((b, i) => (
+                          <tr
+                            key={b.id}
+                            className={[
+                              "border-b border-zinc-800/40 hover:bg-zinc-800/40 transition-colors",
+                              i % 2 === 0 ? "bg-zinc-900/50" : "bg-zinc-900",
+                            ].join(" ")}
+                          >
+                            <td className="px-4 py-3 text-zinc-400 whitespace-nowrap">{new Date(b.recorded_at).toLocaleDateString()}</td>
+                            <td className="px-4 py-3 text-zinc-200 font-medium">{b.weight ?? "—"}</td>
+                            <td className="px-4 py-3 text-zinc-400">{b.height ?? "—"}</td>
+                            <td className="px-4 py-3 text-zinc-400">{b.body_fat_pct ?? "—"}</td>
+                            <td className="px-4 py-3 text-zinc-400">{b.muscle_mass ?? "—"}</td>
+                            <td className="px-4 py-3 text-zinc-400">{b.bmi ?? "—"}</td>
+                            <td className="px-4 py-3">
+                              {b.bmi_category
+                                ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-800 text-zinc-300 border border-zinc-700">{b.bmi_category}</span>
+                                : "—"}
+                            </td>
+                            <td className="px-4 py-3 text-zinc-400">{b.waist_cm ?? "—"}</td>
+                            <td className="px-4 py-3 text-zinc-400">{b.resting_hr ?? "—"}</td>
+                            <td className="px-4 py-3 text-zinc-500 max-w-xs truncate">{b.notes || "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
