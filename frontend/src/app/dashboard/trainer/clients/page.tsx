@@ -1,15 +1,17 @@
 "use client";
 
+/**
+ * Clients page — shows the trainer's assigned members.
+ *
+ * Fetches GET /api/members/clients/ which is scoped to the authenticated
+ * trainer via their bearer token. No gym UUID is needed in the URL.
+ * The response includes `member_id` (the member's user UUID) which is
+ * passed directly to GET /api/biometrics/member/<member_id>/.
+ */
+
 import { useEffect, useState } from "react";
 import { AlertCircle, Loader2, ChevronRight, User } from "lucide-react";
-import {
-  trainerApi,
-  gymApi,
-  biometricsApi,
-  GymApplication,
-  MemberEnrollment,
-  BiometricEntry,
-} from "@/utils/api";
+import { trainerApi, biometricsApi, TrainerClient, BiometricEntry } from "@/utils/api";
 
 function flattenErrors(e: Record<string, string | string[]>): string {
   return Object.entries(e)
@@ -20,74 +22,36 @@ function flattenErrors(e: Record<string, string | string[]>): string {
     .join(" | ");
 }
 
-interface ClientRow extends MemberEnrollment {
-  gym_id: string;
-  gym_name_display: string;
-  member_id_hint: string;
-}
-
 export default function ClientsPage() {
-  const [clients, setClients]     = useState<ClientRow[]>([]);
+  const [clients, setClients]     = useState<TrainerClient[]>([]);
   const [loading, setLoading]     = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [selectedClient, setSelectedClient] = useState<ClientRow | null>(null);
+  const [selectedClient, setSelectedClient] = useState<TrainerClient | null>(null);
   const [biometrics, setBiometrics] = useState<BiometricEntry[]>([]);
   const [bioLoading, setBioLoading] = useState(false);
   const [bioError, setBioError]     = useState<string | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem("access_token") ?? "";
-    const user = (() => {
-      try { return JSON.parse(localStorage.getItem("user") ?? "{}"); } catch { return {}; }
-    })();
-    const trainerName: string = user.name ?? "";
 
-    trainerApi.myApplications(token).then(async ({ data: apps, error }) => {
-      if (error) { setLoadError(flattenErrors(error)); setLoading(false); return; }
-
-      const approvedApps: GymApplication[] = (apps ?? []).filter((a) => a.status === "APPROVED");
-      if (approvedApps.length === 0) { setLoading(false); return; }
-
-      const gymsRes = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/gyms/`
-      );
-      const allGyms = gymsRes.ok ? await gymsRes.json() : [];
-      const gymNameToId: Record<string, string> = {};
-      for (const g of allGyms) gymNameToId[g.name] = g.id;
-
-      const clientRows: ClientRow[] = [];
-      await Promise.all(
-        approvedApps.map(async (app) => {
-          const gymId = gymNameToId[app.gym_name];
-          if (!gymId) return;
-          const { data: members } = await gymApi.members(gymId, "ACTIVE", token);
-          if (!members) return;
-          for (const m of members) {
-            if (m.trainer_name === trainerName) {
-              clientRows.push({
-                ...m,
-                gym_id: gymId,
-                gym_name_display: app.gym_name,
-                member_id_hint: m.id,
-              });
-            }
-          }
-        })
-      );
-
-      setClients(clientRows);
+    // Single authenticated call — backend filters by trainer profile from token
+    trainerApi.clients(token).then(({ data, error }) => {
       setLoading(false);
+      if (error) { setLoadError(flattenErrors(error)); return; }
+      setClients(data ?? []);
     });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
-  async function handleSelectClient(client: ClientRow) {
+  async function handleSelectClient(client: TrainerClient) {
     setSelectedClient(client);
     setBiometrics([]);
     setBioError(null);
     setBioLoading(true);
+
     const token = localStorage.getItem("access_token") ?? "";
-    const { data, error } = await biometricsApi.memberHistory(client.member_id_hint, token);
+    // Use member_id (the member's user UUID) — not the enrollment UUID
+    const { data, error } = await biometricsApi.memberHistory(client.member_id, token);
     setBioLoading(false);
     if (error) { setBioError(flattenErrors(error)); return; }
     setBiometrics(data ?? []);
@@ -152,7 +116,7 @@ export default function ClientsPage() {
                         <p className={`text-sm font-medium truncate ${isSelected ? "text-red-400" : "text-zinc-200"}`}>
                           {c.member_name}
                         </p>
-                        <p className="text-xs text-zinc-500 truncate">{c.gym_name_display}</p>
+                        <p className="text-xs text-zinc-500 truncate">{c.gym_name}</p>
                       </div>
                       <ChevronRight className="w-3.5 h-3.5 text-zinc-600 shrink-0" />
                     </button>
@@ -173,7 +137,7 @@ export default function ClientsPage() {
                 <div className="px-6 py-4 border-b border-zinc-800">
                   <h2 className="text-sm font-semibold text-zinc-200">{selectedClient.member_name}</h2>
                   <p className="text-xs text-zinc-500 mt-0.5">
-                    {selectedClient.gym_name_display} · {selectedClient.tier_name} · {selectedClient.days_remaining} days remaining
+                    {selectedClient.gym_name} · {selectedClient.tier_name} · {selectedClient.days_remaining} days remaining
                   </p>
                 </div>
 

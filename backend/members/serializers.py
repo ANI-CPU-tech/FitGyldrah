@@ -221,3 +221,43 @@ class GymMemberListSerializer(serializers.ModelSerializer):
     def get_days_remaining(self, obj):
         delta = obj.end_date - timezone.now().date()
         return max(delta.days, 0)
+
+
+# ─────────────────────────────────────────────
+# Trainer — assigned client list
+# ─────────────────────────────────────────────
+class TrainerClientSerializer(serializers.ModelSerializer):
+    """
+    Returned by GET /api/members/clients/ (trainer-scoped).
+    Exposes the member's UUID so the frontend can call the
+    biometrics trainer endpoint: GET /api/biometrics/member/<member_id>/
+    """
+
+    member_id = serializers.UUIDField(source="member.id", read_only=True)
+    member_name = serializers.CharField(source="member.name", read_only=True)
+    member_email = serializers.EmailField(source="member.email", read_only=True)
+    gym_name = serializers.CharField(source="gym.name", read_only=True)
+    gym_id = serializers.UUIDField(source="gym.id", read_only=True)
+    tier_name = serializers.CharField(source="tier.name", read_only=True)
+    days_remaining = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MemberEnrollment
+        fields = [
+            "id",           # enrollment UUID
+            "member_id",    # member user UUID — needed for biometrics endpoint
+            "member_name",
+            "member_email",
+            "gym_id",
+            "gym_name",
+            "tier_name",
+            "price_paid",
+            "start_date",
+            "end_date",
+            "days_remaining",
+            "status",
+        ]
+
+    def get_days_remaining(self, obj):
+        delta = obj.end_date - timezone.now().date()
+        return max(delta.days, 0)

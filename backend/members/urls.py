@@ -6,6 +6,7 @@ from .views import (
     EnrollmentDetailView,
     CancelEnrollmentView,
     RenewEnrollmentView,
+    TrainerClientListView,
 )
 
 # Member-facing routes → mount at /api/members/
@@ -30,4 +31,6 @@ urlpatterns = [
         RenewEnrollmentView.as_view(),
         name="member-enrollment-renew",
     ),
+    # Trainer — assigned client roster
+    path("clients/", TrainerClientListView.as_view(), name="trainer-clients"),
 ]

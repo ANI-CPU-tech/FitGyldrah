@@ -217,6 +217,10 @@ export const trainerApi = {
   /** GET /api/trainers/applications/mine/ */
   myApplications: (token: string) =>
     apiRequest<GymApplication[]>("/api/trainers/applications/mine/", { token }),
+
+  /** GET /api/members/clients/ — trainer's assigned client roster */
+  clients: (token: string) =>
+    apiRequest<TrainerClient[]>("/api/members/clients/", { token }),
 };
 
 // ── Biometrics API ────────────────────────────────────────────────────────────
@@ -896,4 +900,21 @@ export interface ProfileUpdatePayload {
   weight?: number | null;
   body_fat_pct?: number | null;
   goals?: string;
+}
+
+// ── Trainer client roster type ────────────────────────────────────────────────
+
+export interface TrainerClient {
+  id: string;           // enrollment UUID
+  member_id: string;    // member user UUID — used for biometrics endpoint
+  member_name: string;
+  member_email: string;
+  gym_id: string;
+  gym_name: string;
+  tier_name: string;
+  price_paid: string;
+  start_date: string;
+  end_date: string;
+  days_remaining: number;
+  status: string;
 }

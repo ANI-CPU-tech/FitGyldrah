@@ -6,7 +6,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied
 
 from django_filters.rest_framework import DjangoFilterBackend
 
-from authentication.permissions import IsOwner, IsMember
+from authentication.permissions import IsOwner, IsMember, IsTrainer
 from gyms.models import Gym
 
 from .models import MemberEnrollment
@@ -16,6 +16,7 @@ from .serializers import (
     EnrollmentCreateSerializer,
     AssignTrainerSerializer,
     GymMemberListSerializer,
+    TrainerClientSerializer,
 )
 
 
@@ -282,3 +283,33 @@ class AssignTrainerView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+# ══════════════════════════════════════════════
+#  TRAINER VIEWS
+# ══════════════════════════════════════════════
+
+
+class TrainerClientListView(generics.ListAPIView):
+    """
+    GET /api/members/clients/
+    Trainer views all members actively assigned to them across all gyms.
+    Requires: TRAINER role + existing TrainerProfile.
+    Optional: ?gym_id=<uuid>  → filter to a single gym
+    """
+
+    serializer_class = TrainerClientSerializer
+    permission_classes = [IsAuthenticated, IsTrainer]
+
+    def get_queryset(self):
+        trainer = self.request.user.trainer_profile
+        qs = MemberEnrollment.objects.filter(
+            trainer=trainer,
+            status=MemberEnrollment.Status.ACTIVE,
+        ).select_related("member", "gym", "tier")
+
+        gym_id = self.request.query_params.get("gym_id")
+        if gym_id:
+            qs = qs.filter(gym_id=gym_id)
+
+        return qs
