@@ -10,7 +10,7 @@ import {
   BadgeCheck,
   Terminal,
 } from "lucide-react";
-import { planApi, FitnessPlan, PlanType } from "@/utils/api";
+import { planApi, trainerApi, FitnessPlan, PlanType, TrainerClient } from "@/utils/api";
 
 function flattenErrors(e: Record<string, string | string[]>): string {
   return Object.entries(e)
@@ -47,6 +47,10 @@ export default function PlansPage() {
   const [plans, setPlans]           = useState<FitnessPlan[]>([]);
   const [plansLoading, setPlansLoading] = useState(true);
 
+  // Assigned client roster — populates the member dropdown
+  const [clients, setClients]         = useState<TrainerClient[]>([]);
+  const [clientsLoading, setClientsLoading] = useState(true);
+
   const [genMemberId, setGenMemberId]       = useState("");
   const [genPlanType, setGenPlanType]       = useState<PlanType>("WORKOUT");
   const [genInstructions, setGenInstructions] = useState("");
@@ -77,7 +81,12 @@ export default function PlansPage() {
   }
 
   useEffect(() => {
+    const token = localStorage.getItem("access_token") ?? "";
     loadPlans();
+    trainerApi.clients(token).then(({ data }) => {
+      setClients(data ?? []);
+      setClientsLoading(false);
+    });
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -188,16 +197,30 @@ export default function PlansPage() {
           <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-widest">Generate AI Plan</h2>
         </div>
         <p className="text-xs text-zinc-500">
-          Enter the member UUID and plan type. The AI will use their biometric data and your instructions to draft a plan.
+          Select a client and plan type. The AI will use their biometric data and your instructions to draft a plan.
         </p>
 
         <form onSubmit={handleGenerate} className="space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
             <div>
-              <label htmlFor="genMemberId" className={labelCls}>Member UUID</label>
-              <input id="genMemberId" type="text" value={genMemberId}
-                onChange={(e) => setGenMemberId(e.target.value)} required
-                placeholder="Member's user UUID" className={inputCls} />
+              <label htmlFor="genMemberId" className={labelCls}>Client</label>
+              <select
+                id="genMemberId"
+                value={genMemberId}
+                onChange={(e) => setGenMemberId(e.target.value)}
+                required
+                disabled={clientsLoading}
+                className={`${inputCls} appearance-none`}
+              >
+                <option value="">
+                  {clientsLoading ? "Loading clients…" : "-- Select a Client --"}
+                </option>
+                {clients.map((c) => (
+                  <option key={c.member_id} value={c.member_id}>
+                    {c.member_name} — {c.gym_name}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label htmlFor="genPlanType" className={labelCls}>Plan Type</label>

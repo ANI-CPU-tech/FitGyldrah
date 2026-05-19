@@ -10,6 +10,7 @@ import {
   Gym,
   GymApplication,
   SessionType,
+  TrainerClient,
 } from "@/utils/api";
 
 function flattenErrors(e: Record<string, string | string[]>): string {
@@ -60,6 +61,10 @@ export default function SchedulePage() {
   const [approvedApps, setApprovedApps] = useState<GymApplication[]>([]);
   const [allGyms, setAllGyms]           = useState<Gym[]>([]);
 
+  // Assigned client roster — populates the member dropdown
+  const [clients, setClients]           = useState<TrainerClient[]>([]);
+  const [clientsLoading, setClientsLoading] = useState(true);
+
   const [formMemberId, setFormMemberId]         = useState("");
   const [formGymId, setFormGymId]               = useState("");
   const [formSessionType, setFormSessionType]   = useState<SessionType>("WORKOUT");
@@ -91,6 +96,10 @@ export default function SchedulePage() {
     const token = localStorage.getItem("access_token") ?? "";
     trainerApi.myApplications(token).then(({ data }) => {
       setApprovedApps((data ?? []).filter((a) => a.status === "APPROVED"));
+    });
+    trainerApi.clients(token).then(({ data }) => {
+      setClients(data ?? []);
+      setClientsLoading(false);
     });
     fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/gyms/`)
       .then((r) => r.json())
@@ -240,16 +249,30 @@ export default function SchedulePage() {
           <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-widest">Propose a New Session</h2>
         </div>
         <p className="text-xs text-zinc-500">
-          The member UUID and gym must match an active enrollment. You must be approved at the chosen gym.
+          Select a client and gym. The client must have an active enrollment at the chosen gym.
         </p>
 
         <form onSubmit={handleCreate} className="space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
             <div>
-              <label htmlFor="formMemberId" className={labelCls}>Member UUID</label>
-              <input id="formMemberId" type="text" value={formMemberId}
-                onChange={(e) => setFormMemberId(e.target.value)} required
-                placeholder="Member's user UUID" className={inputCls} />
+              <label htmlFor="formMemberId" className={labelCls}>Client</label>
+              <select
+                id="formMemberId"
+                value={formMemberId}
+                onChange={(e) => setFormMemberId(e.target.value)}
+                required
+                disabled={clientsLoading}
+                className={`${inputCls} appearance-none`}
+              >
+                <option value="">
+                  {clientsLoading ? "Loading clients…" : "-- Select a Client --"}
+                </option>
+                {clients.map((c) => (
+                  <option key={c.member_id} value={c.member_id}>
+                    {c.member_name} — {c.gym_name}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label htmlFor="formGymId" className={labelCls}>Gym (approved only)</label>
