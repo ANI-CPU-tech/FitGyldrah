@@ -3,6 +3,7 @@
 .env
 backend/.env
 backend/trainer_cvs/
+backend/trainer_pics/
 
 # 🐍 Python
 __pycache__/
