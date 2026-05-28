@@ -79,6 +79,7 @@ Every user claims a single role during onboarding. Role is enforced at the API p
 ## AI Automation Engine
 
 ![AI Generated Workout & Diet Plans](assets/ai-plans.jpeg)
+![AI Generated Workout & Diet Plans](assets/ai-gen.jpeg)
 
 Plan generation is fully asynchronous. A trainer triggers generation via a single API call; the heavy LLM work happens off the request thread in a Celery worker. The trainer polls for the result.
 
