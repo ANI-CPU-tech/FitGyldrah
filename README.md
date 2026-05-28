@@ -36,7 +36,7 @@ Wrapped in a medieval guild aesthetic (a "Gyldrah" is a guild of strength), the 
 
 ## Core Architecture
 
-![FitGyldrah System Architecture](assets/architecture-placeholder.png)
+![FitGyldrah System Architecture](assets/architecture.jpeg)
 
 The backend is a **Django monolith** decomposed into focused Django apps, each owning its own models, serializers, views, and URL routes. The frontend is a **decoupled Next.js application** (App Router) that communicates exclusively via the REST API.
 
