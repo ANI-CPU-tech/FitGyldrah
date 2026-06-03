@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚔️ FitGyldrah
+# FitGyldrah
 
 **A medieval-branded fitness SaaS platform that digitizes the relationship between Gym Owners, Trainers, and Members.**
 
