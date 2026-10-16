@@ -2,7 +2,7 @@
 
 # FitGyldrah
 
-**A medieval-branded fitness SaaS platform that digitizes the relationship between Gym Owners, Trainers, and Members.**
+**A mmmedieval-branded fitness SaaS platform that digitizes the relationship between Gym Owners, Trainers, and Members.**
 
 <br/>
 
